@@ -1,0 +1,49 @@
+name: Build Windows EXE and Publish Release
+
+on:
+  workflow_dispatch:            # Manual trigger: Actions -> Run workflow
+  push:
+    tags:
+      - 'v*'                    # Auto trigger on tag push, e.g. v1.0.0
+
+permissions:
+  contents: write               # Needed to publish GitHub Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Generate ICO from PNG (if missing)
+        run: |
+          python -c "from PIL import Image; Image.open('ic_xue_xi.png').convert('RGBA').save('ic_xue_xi.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+      - name: Build single-file EXE
+        run: |
+          pyinstaller --onefile --windowed --icon=ic_xue_xi.ico --name "SJJ-COM-Tool" --add-data "ic_xue_xi.png;." sjj_com_tool.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SJJ-COM-Tool-windows-x64
+          path: dist/SJJ-COM-Tool.exe
+
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/SJJ-COM-Tool.exe
+          generate_release_notes: true
