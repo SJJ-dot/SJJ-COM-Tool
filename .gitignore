@@ -1,3 +1,17 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
 /venv/
-build
-dist
+sscom_config.json
+
+# ===== PyInstaller 打包产物 =====
+build/
+dist/
+*.spec
+
+# ===== Rust / Tauri 编译产物 =====
+sscom_tauri/src-tauri/target/
+sscom_tauri/src-tauri/gen/
+
+# ===== 开发辅助工具（安装器/压缩器等大文件） =====
+/tools/
