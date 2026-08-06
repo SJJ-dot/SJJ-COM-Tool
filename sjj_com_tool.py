@@ -567,11 +567,13 @@ class _TitleBar(QWidget):
         self.lbl_icon.setFixedSize(18, 18)
         h.addWidget(self.lbl_icon)
         self.lbl_title = QLabel(parent.windowTitle())
-        # 版本号跟随窗口标题（v{APP_VERSION}），标题栏左上角显示。
+        # 版本号跟随窗口标题（v{ver}），标题栏左上角显示。
         # 纯文本（颜色由全局 QSS #titleBar QLabel 控制=titlebar_fg，与其他按钮文字一致，
         # 避免 HTML 链接用默认链接色在深色模式偏深）。点击检查更新由
         # _TitleBar.mouseReleaseEvent 判断"在版本号区域内点击且未拖动"触发。
-        self.lbl_title.setText(f"{APP_TITLE}  v{APP_VERSION}")
+        # 烧录的 APP_VERSION 可能带前导 'v'（如 'v1.0.3'），统一剥掉再拼"v"，避免 "vv1.0.3"
+        _ver = APP_VERSION.lstrip("vV")
+        self.lbl_title.setText(f"{APP_TITLE}  v{_ver}")
         self.lbl_title.setStyleSheet("padding-left:4px;")
         self.lbl_title.setCursor(Qt.PointingHandCursor)
         self.lbl_title.setToolTip("点击检查更新")
@@ -911,7 +913,7 @@ class SerialTool(QWidget):
         # 无边框 + 透明背景：阴影和圆角由 Windows DWM 系统绘制（窗口外，不占窗口内部）
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setWindowTitle(f"{APP_TITLE}  v{APP_VERSION}")
+        self.setWindowTitle(f"{APP_TITLE}  v{APP_VERSION.lstrip('vV')}")
         self.resize(900, 560)
         self.setMinimumSize(900, 560)
 
