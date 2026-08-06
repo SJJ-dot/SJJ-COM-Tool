@@ -30,6 +30,8 @@ import zlib
 import json
 import base64
 import webbrowser
+import urllib.request
+import urllib.error
 from datetime import datetime
 
 import serial
@@ -52,7 +54,27 @@ APP_TITLE = "SJJ‑COM Tool"
 # 版本号：GitHub Actions 打包时通过环境变量 SJJ_COM_VERSION 注入（如 v1.0.0），本地默认 dev
 APP_VERSION = os.environ.get("SJJ_COM_VERSION", "dev")
 GITHUB_URL = "https://github.com/SJJ-dot/SJJ-COM-Tool.git"
+GITHUB_REPO = "SJJ-dot/SJJ-COM-Tool"          # 更新检查用（owner/repo）
+UPDATE_CHECK_URL = "https://api.github.com/repos/SJJ-dot/SJJ-COM-Tool/releases/latest"
 MAX_RECORDS = 5000
+
+
+def _version_tuple(v: str):
+    """把版本号字符串转成可比较元组，如 'v1.2.3' / '1.2.3-beta' → (1,2,3)。"""
+    parts = []
+    for seg in re.split(r"[.\-_]", str(v).lstrip("vV")):
+        if seg.isdigit():
+            parts.append(int(seg))
+        else:
+            break
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def _is_newer(latest: str, current: str) -> bool:
+    """latest 是否比 current 新。dev 视为 0.0.0，任何正式版都更新。"""
+    return _version_tuple(latest) > _version_tuple(current)
 
 DEFAULT_BAUDRATES = [
     "1200", "2400", "4800", "9600", "14400", "19200",
@@ -275,6 +297,41 @@ class SerialReader(QThread):
         self.running = False
 
 
+class UpdateChecker(QThread):
+    """后台检查 GitHub Releases 最新版本（不阻塞 UI）。失败时发 None。"""
+    result = Signal(object)
+
+    def __init__(self, timeout: float = 8.0):
+        super().__init__()
+        self.timeout = timeout
+
+    def run(self):
+        try:
+            req = urllib.request.Request(
+                UPDATE_CHECK_URL,
+                headers={
+                    "User-Agent": f"SJJ-COM-Tool/{APP_VERSION}",
+                    "Accept": "application/vnd.github+json",
+                })
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            tag = data.get("tag_name", "")
+            if not tag:
+                self.result.emit(None)
+                return
+            info = {
+                "latest": tag.lstrip("vV"),
+                "tag": tag,
+                "html_url": data.get("html_url", "")
+                            or f"https://github.com/{GITHUB_REPO}/releases",
+                "name": data.get("name") or "",
+                "body": data.get("body") or "",
+            }
+            self.result.emit(info)
+        except Exception:
+            self.result.emit(None)
+
+
 # ================= 标题栏主题切换按钮 SVG 图标 =================
 # 替代 emoji 字符（避免系统字体回退 + emoji 太大/彩色问题）；
 # 颜色由 SerialTool.apply_theme 动态注入（CURRENT 占位符）。
@@ -471,9 +528,14 @@ class _TitleBar(QWidget):
         self.lbl_icon.setFixedSize(18, 18)
         h.addWidget(self.lbl_icon)
         self.lbl_title = QLabel(parent.windowTitle())
-        # 版本号跟随窗口标题（v{APP_VERSION}），标题栏左上角显示
+        # 版本号跟随窗口标题（v{APP_VERSION}），标题栏左上角显示。
+        # 纯文本（颜色由全局 QSS #titleBar QLabel 控制=titlebar_fg，与其他按钮文字一致，
+        # 避免 HTML 链接用默认链接色在深色模式偏深）。点击检查更新由
+        # _TitleBar.mouseReleaseEvent 判断"在版本号区域内点击且未拖动"触发。
         self.lbl_title.setText(f"{APP_TITLE}  v{APP_VERSION}")
         self.lbl_title.setStyleSheet("padding-left:4px;")
+        self.lbl_title.setCursor(Qt.PointingHandCursor)
+        self.lbl_title.setToolTip("点击检查更新")
         h.addWidget(self.lbl_title)
         h.addStretch(1)
         # 按钮：主题切换（最小化左侧）→ 最小化 → 最大化 → 关闭
@@ -521,6 +583,12 @@ class _TitleBar(QWidget):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
+            child = self.childAt(e.position().toPoint())
+            # 版本号（lbl_title）/图标区域不启动拖动：
+            # 点击版本号用于"手动检查更新"，避免触发拖动后弹窗拦截 release 无法释放
+            if child is self.lbl_title or child is self.lbl_icon:
+                super().mousePressEvent(e)
+                return
             self._drag_pos = e.globalPos() - self._win.frameGeometry().topLeft()
             self._pressed = True
             e.accept()
@@ -548,9 +616,18 @@ class _TitleBar(QWidget):
             super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
-        self._pressed = False
-        self._drag_pos = None
-        super().mouseReleaseEvent(e)
+        if e.button() == Qt.LeftButton:
+            # 版本号区域点击且本次未拖动 → 手动检查更新
+            if not self._pressed and self.lbl_title.geometry().contains(
+                    e.position().toPoint()):
+                self._win._check_update_manual()
+                e.accept()
+                return
+            self._pressed = False
+            self._drag_pos = None
+            super().mouseReleaseEvent(e)
+        else:
+            super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -620,11 +697,15 @@ class SerialTool(QWidget):
         self._theme = "light"                     # 当前主题（dark / light）
         self._win_bg = THEMES["light"]["win_bg"]  # paintEvent 画背景用
         self._rx_epoch = 0                        # 串口代际号：关闭后丢弃旧线程排队的信号
+        self._update_checker = None               # 后台更新检查线程
+        self._ignore_update_version = None        # 用户"忽略本次更新"的版本号（持久化）
 
         self._build_ui()
         self.apply_theme(self._theme)   # 初始应用主题（QApplication 级 QSS）
         self._refresh_ports()
         self._autoload_config()
+        # 启动延迟 2 秒自动检查更新（后台线程，不阻塞 UI；失败静默）
+        QTimer.singleShot(2000, self._check_update_auto)
 
         # 无边框窗口边缘缩放（事件过滤器全局拦截）
         self._resize_margin = 8
@@ -1077,6 +1158,78 @@ class SerialTool(QWidget):
         new_theme = "dark" if self._theme == "light" else "light"
         self.apply_theme(new_theme)
         self._save_params(silent=True)
+
+    # ================= 更新检查 =================
+    def _check_update_auto(self):
+        """启动时自动检查（后台线程）。遵守"忽略本次更新"标记。"""
+        if self._update_checker is not None and self._update_checker.isRunning():
+            return
+        self._update_checker = UpdateChecker()
+        self._update_checker.result.connect(self._on_update_check_result)
+        self._update_checker.start()
+
+    def _check_update_manual(self, *_):
+        """点击标题栏版本号：手动检查更新（忽略"忽略本次更新"标记，无更新时提示）。"""
+        if self._update_checker is not None and self._update_checker.isRunning():
+            return
+        # 状态栏提示正在检查
+        self.lbl_status.setStyleSheet("color:#F9E2AF;")  # 主题无关的临时提示色
+        self.lbl_status.setText("正在检查更新...")
+        self._update_checker = UpdateChecker()
+        self._update_checker._manual = True
+        self._update_checker.result.connect(self._on_update_check_result)
+        self._update_checker.start()
+
+    def _on_update_check_result(self, info):
+        """后台检查结果：有更新 → 弹窗；手动检查无更新 → 提示。
+        所有分支结束后调用 _refresh_status() 恢复串口状态栏（消除"正在检查更新..."提示）。"""
+        if info is None:
+            # 网络失败：仅手动检查时提示（自动检查静默）；完成后都恢复状态栏
+            if getattr(self._update_checker, "_manual", False):
+                self.lbl_status.setText("检查更新失败（网络不可用）")
+                QMessageBox.information(self, "检查更新",
+                                        "无法连接到 GitHub，请检查网络后重试。")
+            self._refresh_status()
+            return
+        latest = info["latest"]
+        manual = getattr(self._update_checker, "_manual", False)
+        if not _is_newer(latest, APP_VERSION):
+            if manual:
+                self.lbl_status.setText(f"已是最新版本 v{APP_VERSION}")
+                QMessageBox.information(self, "检查更新",
+                                        f"当前已是最新版本 v{APP_VERSION}。")
+                self._refresh_status()
+            return
+        # 自动检查：被忽略过的版本不再提示
+        if not manual and self._ignore_update_version == latest:
+            return
+        self._show_update_dialog(info)
+        self._refresh_status()
+
+    def _show_update_dialog(self, info: dict):
+        """更新弹窗：立即更新 / 下次再说 / 忽略本次更新。"""
+        latest = info["latest"]
+        box = QMessageBox(self)
+        box.setWindowTitle("发现新版本")
+        box.setIcon(QMessageBox.Information)
+        box.setText(f"发现新版本 v{latest}\n当前版本 v{APP_VERSION}")
+        if info.get("body"):
+            body = info["body"].strip().splitlines()
+            brief = "\n".join(body[:6])
+            box.setInformativeText(f"更新说明：\n{brief}")
+        btn_update = box.addButton("立即更新", QMessageBox.AcceptRole)
+        btn_later = box.addButton("下次再说", QMessageBox.RejectRole)
+        btn_ignore = box.addButton("忽略本次更新", QMessageBox.DestructiveRole)
+        box.setDefaultButton(btn_update)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_update:
+            # 打开 release 下载页（exe 已自动附加到 Release 资源）
+            webbrowser.open(info["html_url"] or f"https://github.com/{GITHUB_REPO}/releases")
+        elif clicked is btn_ignore:
+            # 记住忽略的版本，下次自动检查不再提示（手动点击仍可检查）
+            self._ignore_update_version = latest
+            self._save_params(silent=True)
 
     # ================= 历史记录 Tab =================
     def _build_history_tab(self):
@@ -2082,6 +2235,7 @@ class SerialTool(QWidget):
             "panel_visible": not self.ms_tabs.isHidden(),
             "panel_tab": self.ms_tabs.currentIndex(),
             "theme": self._theme,
+            "ignore_update_version": self._ignore_update_version,
         }
         try:
             with open(self._config_path(), "w", encoding="utf-8") as f:
@@ -2106,6 +2260,7 @@ class SerialTool(QWidget):
             if theme not in THEMES:
                 theme = "light"
             self.apply_theme(theme)
+            self._ignore_update_version = cfg.get("ignore_update_version")
             self.cmb_baud.setCurrentText(cfg.get("baud", "115200"))
             self.var_databits = cfg.get("databits", "8")
             self.var_stopbits = cfg.get("stopbits", "1")
