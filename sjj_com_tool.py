@@ -29,6 +29,8 @@ import struct
 import zlib
 import json
 import base64
+import shutil
+import subprocess
 import webbrowser
 import urllib.request
 import urllib.error
@@ -330,10 +332,43 @@ class UpdateChecker(QThread):
                             or f"https://github.com/{GITHUB_REPO}/releases",
                 "name": data.get("name") or "",
                 "body": data.get("body") or "",
+                # release 附件里的 exe 下载地址（自动更新用），没有则为空
+                "exe_url": next(
+                    (a.get("browser_download_url", "")
+                     for a in data.get("assets", [])
+                     if a.get("name", "").lower() == "sjj-com-tool.exe"),
+                    ""),
             }
             self.result.emit(info)
         except Exception:
             self.result.emit(None)
+
+
+class ExeDownloader(QThread):
+    """后台下载最新版 exe（带流式写入，不阻塞 UI）。"""
+    finished_ok = Signal(str)   # 临时文件路径
+    failed = Signal(str)        # 错误信息
+
+    def __init__(self, url: str, timeout: float = 120.0):
+        super().__init__()
+        self.url = url
+        self.timeout = timeout
+
+    def run(self):
+        try:
+            req = urllib.request.Request(
+                self.url,
+                headers={"User-Agent": f"SJJ-COM-Tool/{APP_VERSION}"})
+            tmp = os.path.join(os.path.dirname(sys.executable),
+                               "SJJ-COM-Tool.update.exe")
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp, \
+                    open(tmp, "wb") as f:
+                shutil.copyfileobj(resp, f, length=256 * 1024)
+            if os.path.getsize(tmp) == 0:
+                raise OSError("下载文件为空")
+            self.finished_ok.emit(tmp)
+        except Exception as e:
+            self.failed.emit(str(e))
 
 
 # ================= 标题栏主题切换按钮 SVG 图标 =================
@@ -1228,12 +1263,82 @@ class SerialTool(QWidget):
         box.exec()
         clicked = box.clickedButton()
         if clicked is btn_update:
-            # 打开 release 下载页（exe 已自动附加到 Release 资源）
-            webbrowser.open(info["html_url"] or f"https://github.com/{GITHUB_REPO}/releases")
+            self._start_update_download(info)
         elif clicked is btn_ignore:
             # 记住忽略的版本，下次自动检查不再提示（手动点击仍可检查）
             self._ignore_update_version = latest
             self._save_params(silent=True)
+
+    # ================= 自动下载更新 =================
+    def _start_update_download(self, info: dict):
+        """点击"立即更新"：有 exe 附件 → 下载并自动替换重启；否则打开 release 页。"""
+        exe_url = info.get("exe_url", "")
+        if not exe_url:
+            webbrowser.open(info["html_url"] or f"https://github.com/{GITHUB_REPO}/releases")
+            return
+        if not getattr(sys, "frozen", False):
+            # 源码运行：没有可替换的 exe，引导打开下载页
+            QMessageBox.information(
+                self, "自动更新",
+                "当前为源码运行，无法自动替换程序。\n"
+                "将打开 GitHub 下载页，请手动下载最新 exe。")
+            webbrowser.open(info["html_url"] or f"https://github.com/{GITHUB_REPO}/releases")
+            return
+        ret = QMessageBox.question(
+            self, "自动更新",
+            "将下载最新版并自动替换当前程序（下载完成后自动重启）。\n是否继续？")
+        if ret != QMessageBox.Yes:
+            return
+        if getattr(self, "_download_thread", None) is not None and \
+                self._download_thread.isRunning():
+            return
+        self.lbl_status.setText("正在下载更新...")
+        self._download_thread = ExeDownloader(exe_url)
+        self._download_thread.finished_ok.connect(self._on_update_downloaded)
+        self._download_thread.failed.connect(self._on_update_download_failed)
+        self._download_thread.start()
+
+    def _on_update_downloaded(self, tmp: str):
+        """下载完成：生成替换批处理（等本进程退出后替换 exe 并重启），然后退出程序。"""
+        self._refresh_status()
+        exe_dir = os.path.dirname(sys.executable)
+        target = os.path.join(exe_dir, "SJJ-COM-Tool.exe")
+        bat = os.path.join(exe_dir, "_sjj_update.bat")
+        # 注意：if errorlevel 1 判断 find 未找到（进程已退出），避免括号内 %errorlevel% 延迟展开问题
+        script = (
+            "@echo off\r\n"
+            ":wait\r\n"
+            'tasklist /fi "imagename eq SJJ-COM-Tool.exe" 2>nul '
+            '| find /i "SJJ-COM-Tool.exe" >nul\r\n'
+            "if errorlevel 1 goto replace\r\n"
+            "timeout /t 1 /nobreak >nul\r\n"
+            "goto wait\r\n"
+            ":replace\r\n"
+            f'move /y "{tmp}" "{target}" >nul 2>&1\r\n'
+            f'start "" "{target}"\r\n'
+            "del \"%~f0\"\r\n"
+        )
+        try:
+            with open(bat, "w", encoding="ascii") as f:
+                f.write(script)
+            # CREATE_NO_WINDOW 静默启动批处理，不弹黑窗
+            subprocess.Popen(["cmd", "/c", bat], close_fds=True,
+                             creationflags=0x08000000)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "更新失败",
+                f"无法启动更新程序：{e}\n"
+                f"新版本已下载到：{tmp}\n请手动替换 {target}")
+            return
+        self.lbl_status.setText("更新下载完成，正在重启...")
+        # 延迟退出，让状态栏提示可见；closeEvent 会保存配置
+        QTimer.singleShot(800, self.close)
+
+    def _on_update_download_failed(self, err: str):
+        self._refresh_status()
+        QMessageBox.critical(
+            self, "更新失败",
+            f"下载更新失败：{err}\n请稍后重试或前往 GitHub 手动下载。")
 
     # ================= 历史记录 Tab =================
     def _build_history_tab(self):
