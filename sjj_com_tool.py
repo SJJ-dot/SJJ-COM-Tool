@@ -588,6 +588,7 @@ class SerialTool(QWidget):
         self._ms_row_widgets = []
         self._theme = "light"                     # 当前主题（dark / light）
         self._win_bg = THEMES["light"]["win_bg"]  # paintEvent 画背景用
+        self._rx_epoch = 0                        # 串口代际号：关闭后丢弃旧线程排队的信号
 
         self._build_ui()
         self.apply_theme(self._theme)   # 初始应用主题（QApplication 级 QSS）
@@ -1367,8 +1368,14 @@ class SerialTool(QWidget):
             self.ser.dtr = False
             self.ser.rts = False
             self.reader = SerialReader(self.ser)
-            self.reader.received.connect(self._on_serial_data)
-            self.reader.error.connect(self._on_serial_error)
+            # 每次开串口递增代际号并绑定到信号：关闭后旧线程排队的
+            # received/error 信号到达时因代际不匹配被丢弃，避免"关闭后还收数据"
+            self._rx_epoch += 1
+            epoch = self._rx_epoch
+            self.reader.received.connect(
+                lambda d, e=epoch: self._on_serial_data(d, e))
+            self.reader.error.connect(
+                lambda m, e=epoch: self._on_serial_error(m, e))
             self.reader.start()
             self.btn_open.setText("关闭串口")
             self._refresh_status()
@@ -1393,17 +1400,27 @@ class SerialTool(QWidget):
             except Exception:
                 pass
         self.ser = None
+        # 代际号递增：关闭瞬间使旧串口线程排队的 received/error 信号全部失效
+        self._rx_epoch += 1
+        # 丢弃尚未刷新的接收缓冲（关闭瞬间 pending 里的残留数据）
+        self.pending_rx = []
         self.btn_open.setText("打开串口")
         self._refresh_status()
         self._add_record("sys", "串口已关闭")
 
-    def _on_serial_data(self, data: bytes):
+    def _on_serial_data(self, data: bytes, epoch: int):
+        """收到数据。epoch 不匹配说明是已关闭串口排队的残留信号，直接丢弃。"""
+        if epoch != self._rx_epoch:
+            return
         self.rx_bytes += len(data)
         self.pending_rx.append(self._rx_body(data))
         if len(self.pending_rx) > MAX_RECORDS:
             self.pending_rx = self.pending_rx[-MAX_RECORDS:]
 
-    def _on_serial_error(self, msg: str):
+    def _on_serial_error(self, msg: str, epoch: int):
+        """读线程报错。旧串口排队的 error 信号同样按代际丢弃。"""
+        if epoch != self._rx_epoch:
+            return
         self._add_record("sys", f"[读取异常] {msg}")
         self._close_port()
 
