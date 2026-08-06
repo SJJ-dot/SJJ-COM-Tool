@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QDialog, QFormLayout, QSpinBox, QScrollArea, QFrame,
     QSizePolicy, QGroupBox, QGridLayout, QStyledItemDelegate, QMenu,
     QToolButton, QGraphicsDropShadowEffect, QStyle, QStyleOptionButton,
-    QStyleOptionFocusRect,
+    QStyleOptionFocusRect, QStyleOptionComboBox,
 )
 from PySide6.QtCore import QPoint, QThread, Signal, Qt, QTimer, QUrl, QEvent, QRectF, QByteArray, QSize, QBuffer, QIODevice
 from PySide6.QtGui import QTextCursor, QColor, QTextCharFormat, QDesktopServices, QFont, QIcon, QPainter, QPainterPath, QPen, QBrush, QRegion, QPixmap, QPolygon, QPalette
@@ -199,12 +199,11 @@ def _global_qss(t: dict) -> str:
         f"QComboBox{{background-color:{t['input_bg']};color:{t['text_primary']};"
         f"border:1px solid {t['input_border']};border-radius:5px;padding:2px 8px;}}"
         f"QComboBox:hover{{border-color:{t['accent']};}}"
-        # 缓存箭头 PNG（提前生成用于 QSS），用 file:// URL 作为 drop-down 区域 background
-        #（Qt 6 image:url 在 sub-control 不渲染，background-image 在 sub-control 区域可用）
+        # 下拉箭头由 _StyledComboBox 内置 QLabel 显示（避免 Qt 6 image 兼容问题）；
+        # 隐藏 Qt 自带的 native arrow 避免重叠
         f"QComboBox::drop-down{{border:none;subcontrol-origin:padding;"
-        f"subcontrol-position:top right;width:20px;height:100%;"
-        f"background-image:url(\"{_cache_pixmap(_make_arrow_pixmap(t['input_border']), 'sscom_arrow.png')}\");"
-        f"background-position:center;background-repeat:no-repeat;}}"
+        f"subcontrol-position:top right;width:20px;}}"
+        f"QComboBox::down-arrow{{image:none;width:0;height:0;}}"
         f"QComboBox QAbstractItemView{{background-color:{t['combo_item_bg']};"
         f"color:{t['text_primary']};selection-background-color:{t['combo_item_sel']};"
         f"border:1px solid {t['input_border']};}}"
@@ -361,6 +360,38 @@ def _make_arrow_pixmap(fill_color: str) -> QPixmap:
     p.drawPolygon(QPolygon([QPoint(1, 3), QPoint(9, 3), QPoint(5, 7)]))
     p.end()
     return pixmap
+
+
+class _StyledComboBox(QComboBox):
+    """主题化下拉框：在右侧叠加一个 QLabel 显示箭头（Qt 限制：widget
+    paintEvent 期间不能创建第二个 QPainter，所以用子 QLabel 方案绕开）。
+    label 设置 WA_TransparentForMouseEvents 让点击穿透到 combo 不影响下拉。"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._arrow = QLabel("▾", self)
+        self._arrow.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._arrow.setAlignment(Qt.AlignCenter)
+        self._arrow.setStyleSheet(
+            "background:transparent;color:#4C4F69;font-size:14px;")
+        self._arrow.resize(18, self.height())
+        self._arrow.move(self.width() - 18, 0)
+        self._arrow.show()
+
+    def set_arrow_color(self, color):
+        if isinstance(color, QColor):
+            c = color.name()
+        else:
+            c = str(color)
+        self._arrow.setStyleSheet(
+            f"background:transparent;color:{c};font-size:14px;")
+        self._arrow.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # label 始终在右侧 18px 区域内
+        self._arrow.resize(18, self.height())
+        self._arrow.move(self.width() - 18, 0)
 
 
 class _ThemeCheckBox(QCheckBox):
@@ -538,7 +569,7 @@ class _TitleBar(QWidget):
         m.exec(e.globalPos())
 
 
-class PortComboBox(QComboBox):
+class PortComboBox(_StyledComboBox):
     """端口号下拉：宽度不足时直接末尾硬截断；弹出列表项末尾省略号；弹出按内容宽度展开。"""
 
     def __init__(self, parent=None):
@@ -830,7 +861,7 @@ class SerialTool(QWidget):
         self.chk_show_ts.stateChanged.connect(self._refresh_view)
         self.chk_pause = _ThemeCheckBox("暂停刷新"); rt.addWidget(self.chk_pause)
         rt.addWidget(QLabel("编码:"))
-        self.cmb_encoding = QComboBox()
+        self.cmb_encoding = _StyledComboBox()
         self.cmb_encoding.addItems(ENCODINGS)
         self.cmb_encoding.setEditable(False)
         self.cmb_encoding.setFixedWidth(90)
@@ -880,7 +911,7 @@ class SerialTool(QWidget):
         lbl_baud = QLabel("波特率:")
         lbl_baud.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)   # 不伸展，避免与下拉之间出现间隔
         baud_row.addWidget(lbl_baud)
-        self.cmb_baud = QComboBox()
+        self.cmb_baud = _StyledComboBox()
         self.cmb_baud.addItems(DEFAULT_BAUDRATES)
         self.cmb_baud.setCurrentText("115200")
         self.cmb_baud.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -946,7 +977,7 @@ class SerialTool(QWidget):
         cs_lay.addWidget(self.entry_cs_end)
 
         cs_lay.addWidget(QLabel("加校验"))
-        self.cmb_checksum = QComboBox()
+        self.cmb_checksum = _StyledComboBox()
         self.cmb_checksum.addItems(CHECKSUMS)
         self.cmb_checksum.setEditable(False)
         self.cmb_checksum.setFixedWidth(110)
@@ -1034,6 +1065,9 @@ class SerialTool(QWidget):
         # 主题化复选框：手动绘制，传入颜色
         for cb in self.findChildren(_ThemeCheckBox):
             cb.set_theme_colors(t)
+        # 主题化下拉框：手动绘制箭头，颜色随主题变化
+        for combo in self.findChildren(_StyledComboBox):
+            combo.set_arrow_color(QColor(t["text_primary"]))
         self._update_cs_highlight()
         self._refresh_status()
         self.update()   # 立即触发 paintEvent 重画窗口背景
@@ -1243,27 +1277,27 @@ class SerialTool(QWidget):
         dlg.finished.connect(lambda _r: setattr(self, "_settings_win", None))
         form = QFormLayout(dlg)
 
-        self.cmb_set_baud = QComboBox()
+        self.cmb_set_baud = _StyledComboBox()
         self.cmb_set_baud.addItems(DEFAULT_BAUDRATES)
         self.cmb_set_baud.setCurrentText(self.cmb_baud.currentText())
         form.addRow("波特率:", self.cmb_set_baud)
 
-        self.cmb_set_databits = QComboBox()
+        self.cmb_set_databits = _StyledComboBox()
         self.cmb_set_databits.addItems(DEFAULT_DATABITS)
         self.cmb_set_databits.setCurrentText(self.var_databits)
         form.addRow("数据位:", self.cmb_set_databits)
 
-        self.cmb_set_stopbits = QComboBox()
+        self.cmb_set_stopbits = _StyledComboBox()
         self.cmb_set_stopbits.addItems(DEFAULT_STOPBITS)
         self.cmb_set_stopbits.setCurrentText(self.var_stopbits)
         form.addRow("停止位:", self.cmb_set_stopbits)
 
-        self.cmb_set_parity = QComboBox()
+        self.cmb_set_parity = _StyledComboBox()
         self.cmb_set_parity.addItems(DEFAULT_PARITY)
         self.cmb_set_parity.setCurrentText(self.var_parity)
         form.addRow("校验位:", self.cmb_set_parity)
 
-        self.cmb_set_flow = QComboBox()
+        self.cmb_set_flow = _StyledComboBox()
         self.cmb_set_flow.addItems(DEFAULT_FLOW)
         self.cmb_set_flow.setCurrentText(self.var_flow)
         form.addRow("流控:", self.cmb_set_flow)
