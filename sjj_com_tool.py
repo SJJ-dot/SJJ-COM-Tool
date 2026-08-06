@@ -51,8 +51,12 @@ from PySide6.QtGui import QTextCursor, QColor, QTextCharFormat, QDesktopServices
 from PySide6.QtSvg import QSvgRenderer
 
 APP_TITLE = "SJJ‑COM Tool"
-# 版本号：GitHub Actions 打包时通过环境变量 SJJ_COM_VERSION 注入（如 v1.0.0），本地默认 dev
-APP_VERSION = os.environ.get("SJJ_COM_VERSION", "dev")
+# 版本号：GitHub Actions 打包前会生成 _version.py（内容 APP_VERSION = "v1.0.1"）烧录进 exe；
+# 本地开发无 _version.py 时回退为环境变量（兜底）→ "dev"
+try:
+    from _version import APP_VERSION
+except ImportError:
+    APP_VERSION = os.environ.get("SJJ_COM_VERSION", "dev")
 GITHUB_URL = "https://github.com/SJJ-dot/SJJ-COM-Tool.git"
 GITHUB_REPO = "SJJ-dot/SJJ-COM-Tool"          # 更新检查用（owner/repo）
 UPDATE_CHECK_URL = "https://api.github.com/repos/SJJ-dot/SJJ-COM-Tool/releases/latest"

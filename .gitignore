@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 /venv/
 sscom_config.json
+# 构建时生成的版本号文件（GitHub Actions 注入）
+_version.py
 # 运行时生成的图标缓存（下拉箭头 PNG 等）
 /cache/
 

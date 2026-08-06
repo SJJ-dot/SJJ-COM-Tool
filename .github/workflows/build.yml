@@ -31,12 +31,19 @@ jobs:
         run: |
           python -c "from PIL import Image; Image.open('imgs/ic_xue_xi.png').convert('RGBA').save('imgs/ic_xue_xi.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
 
-      - name: Build single-file EXE
-        # 版本号注入：tag 推送(如 v1.2.3)时用 tag 名；手动触发用 dev
-        env:
-          SJJ_COM_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+      - name: Inject version into build
+        # 版本号：tag 推送(如 v1.2.3)用 tag 名；手动触发用 dev。
+        # 生成 _version.py 烧录进 exe——不能依赖运行环境变量：exe 启动时
+        # os.environ 读的是用户电脑的环境变量，构建时的 env 已丢失，版本会永远显示 dev。
+        shell: bash
         run: |
-          pyinstaller --onefile --windowed --icon=imgs/ic_xue_xi.ico --name "SJJ-COM-Tool" --add-data "imgs/ic_xue_xi.png;imgs" sjj_com_tool.py
+          VERSION="${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}"
+          printf "APP_VERSION = '%s'\n" "$VERSION" > _version.py
+          echo "Injected version: $VERSION"
+
+      - name: Build single-file EXE
+        run: |
+          pyinstaller --onefile --windowed --icon=imgs/ic_xue_xi.ico --name "SJJ-COM-Tool" --add-data "imgs/ic_xue_xi.png;imgs" --hidden-import=_version sjj_com_tool.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
