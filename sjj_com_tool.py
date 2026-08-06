@@ -29,7 +29,6 @@ import struct
 import zlib
 import json
 import base64
-import shutil
 import subprocess
 import webbrowser
 import urllib.request
@@ -44,6 +43,7 @@ from PySide6.QtWidgets import (
     QComboBox, QPushButton, QCheckBox, QLineEdit, QTextEdit,
     QTabWidget, QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
     QMessageBox, QDialog, QFormLayout, QSpinBox, QScrollArea, QFrame,
+    QProgressDialog,
     QSizePolicy, QGroupBox, QGridLayout, QStyledItemDelegate, QMenu,
     QToolButton, QGraphicsDropShadowEffect, QStyle, QStyleOptionButton,
     QStyleOptionFocusRect, QStyleOptionComboBox,
@@ -348,27 +348,58 @@ class ExeDownloader(QThread):
     """后台下载最新版 exe（带流式写入，不阻塞 UI）。"""
     finished_ok = Signal(str)   # 临时文件路径
     failed = Signal(str)        # 错误信息
+    progress = Signal(int, int) # 已下载字节, 总字节(-1 未知)
 
     def __init__(self, url: str, timeout: float = 120.0):
         super().__init__()
         self.url = url
         self.timeout = timeout
+        self._cancel = False
+
+    def cancel(self):
+        """取消下载（线程内下个分块时退出并清理临时文件）。"""
+        self._cancel = True
 
     def run(self):
+        tmp = None
         try:
             req = urllib.request.Request(
                 self.url,
                 headers={"User-Agent": f"SJJ-COM-Tool/{APP_VERSION}"})
             tmp = os.path.join(os.path.dirname(sys.executable),
                                "SJJ-COM-Tool.update.exe")
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp, \
-                    open(tmp, "wb") as f:
-                shutil.copyfileobj(resp, f, length=256 * 1024)
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                # GitHub 资产下载响应头通常带 Content-Length
+                total = -1
+                try:
+                    total = int(resp.headers.get("Content-Length", -1))
+                except (TypeError, ValueError):
+                    total = -1
+                done = 0
+                with open(tmp, "wb") as f:
+                    while True:
+                        if self._cancel:
+                            raise OSError("下载已取消")
+                        chunk = resp.read(256 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        done += len(chunk)
+                        self.progress.emit(done, total)
             if os.path.getsize(tmp) == 0:
                 raise OSError("下载文件为空")
             self.finished_ok.emit(tmp)
         except Exception as e:
-            self.failed.emit(str(e))
+            if self._cancel:
+                self.failed.emit("下载已取消")
+            else:
+                self.failed.emit(str(e))
+            # 清理半成品临时文件
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
 
 # ================= 标题栏主题切换按钮 SVG 图标 =================
@@ -1295,20 +1326,59 @@ class SerialTool(QWidget):
                 self._download_thread.isRunning():
             return
         self.lbl_status.setText("正在下载更新...")
+        # 进度对话框（带取消）：线程发 progress(done, total) 更新
+        dlg = QProgressDialog("正在下载更新...", "取消", 0, 100, self)
+        dlg.setWindowTitle("自动更新")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        dlg.show()
+        self._update_progress_dlg = dlg
         self._download_thread = ExeDownloader(exe_url)
+        self._download_thread.progress.connect(
+            lambda done, total: self._on_download_progress(done, total, dlg))
         self._download_thread.finished_ok.connect(self._on_update_downloaded)
         self._download_thread.failed.connect(self._on_update_download_failed)
+        dlg.canceled.connect(self._download_thread.cancel)
         self._download_thread.start()
+
+    def _on_download_progress(self, done: int, total: int, dlg):
+        """更新进度对话框：知道总大小 → 百分比 + 字节；未知 → 忙动画。"""
+        if total > 0:
+            dlg.setMaximum(100)
+            dlg.setValue(min(100, int(done * 100 / total)))
+            dlg.setLabelText(
+                f"正在下载更新... {done // 1024} KB / {total // 1024} KB")
+        else:
+            dlg.setMaximum(0)      # busy 模式
+            dlg.setValue(0)
+            dlg.setLabelText(f"正在下载更新... {done // 1024} KB")
+
+    def _close_update_progress(self):
+        """关闭进度对话框（下载完成/失败/取消后统一调用）。"""
+        dlg = getattr(self, "_update_progress_dlg", None)
+        if dlg is not None:
+            try:
+                dlg.close()
+            except Exception:
+                pass
+            self._update_progress_dlg = None
 
     def _on_update_downloaded(self, tmp: str):
         """下载完成：生成替换批处理（等本进程退出后替换 exe 并重启），然后退出程序。"""
+        self._close_update_progress()
         self._refresh_status()
         exe_dir = os.path.dirname(sys.executable)
         target = os.path.join(exe_dir, "SJJ-COM-Tool.exe")
         bat = os.path.join(exe_dir, "_sjj_update.bat")
-        # 注意：if errorlevel 1 判断 find 未找到（进程已退出），避免括号内 %errorlevel% 延迟展开问题
+        # 注意：if errorlevel 1 判断 find 未找到（进程已退出），避免括号内 %errorlevel% 延迟展开问题。
+        # bat 用 UTF-8 with BOM 写入（encoding="utf-8-sig"），cmd 需用 chcp 65001 切到 UTF-8 代码页
+        # 才能正确解析 bat + 含中文的 exe 路径（默认 GBK 代码页会乱码导致 move 找不到文件）。
         script = (
             "@echo off\r\n"
+            "chcp 65001 >nul\r\n"
             ":wait\r\n"
             'tasklist /fi "imagename eq SJJ-COM-Tool.exe" 2>nul '
             '| find /i "SJJ-COM-Tool.exe" >nul\r\n'
@@ -1321,7 +1391,7 @@ class SerialTool(QWidget):
             "del \"%~f0\"\r\n"
         )
         try:
-            with open(bat, "w", encoding="ascii") as f:
+            with open(bat, "w", encoding="utf-8-sig") as f:
                 f.write(script)
             # CREATE_NO_WINDOW 静默启动批处理，不弹黑窗
             subprocess.Popen(["cmd", "/c", bat], close_fds=True,
@@ -1337,6 +1407,7 @@ class SerialTool(QWidget):
         QTimer.singleShot(800, self.close)
 
     def _on_update_download_failed(self, err: str):
+        self._close_update_progress()
         self._refresh_status()
         QMessageBox.critical(
             self, "更新失败",
