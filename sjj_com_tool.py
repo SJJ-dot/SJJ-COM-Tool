@@ -28,6 +28,7 @@ import time
 import struct
 import zlib
 import json
+import base64
 import webbrowser
 from datetime import datetime
 
@@ -40,12 +41,16 @@ from PySide6.QtWidgets import (
     QTabWidget, QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
     QMessageBox, QDialog, QFormLayout, QSpinBox, QScrollArea, QFrame,
     QSizePolicy, QGroupBox, QGridLayout, QStyledItemDelegate, QMenu,
-    QToolButton, QGraphicsDropShadowEffect,
+    QToolButton, QGraphicsDropShadowEffect, QStyle, QStyleOptionButton,
+    QStyleOptionFocusRect,
 )
-from PySide6.QtCore import QThread, Signal, Qt, QTimer, QUrl, QEvent, QRectF
-from PySide6.QtGui import QTextCursor, QColor, QTextCharFormat, QDesktopServices, QFont, QIcon, QPainter, QPainterPath, QPen, QBrush, QRegion
+from PySide6.QtCore import QPoint, QThread, Signal, Qt, QTimer, QUrl, QEvent, QRectF, QByteArray, QSize, QBuffer, QIODevice
+from PySide6.QtGui import QTextCursor, QColor, QTextCharFormat, QDesktopServices, QFont, QIcon, QPainter, QPainterPath, QPen, QBrush, QRegion, QPixmap, QPolygon, QPalette
+from PySide6.QtSvg import QSvgRenderer
 
 APP_TITLE = "SJJ‑COM Tool"
+# 版本号：GitHub Actions 打包时通过环境变量 SJJ_COM_VERSION 注入（如 v1.0.0），本地默认 dev
+APP_VERSION = os.environ.get("SJJ_COM_VERSION", "dev")
 GITHUB_URL = "https://github.com/SJJ-dot/SJJ-COM-Tool.git"
 MAX_RECORDS = 5000
 
@@ -66,6 +71,181 @@ CHECKSUMS = ["None", "0-ADD8", "ADD8", "XOR8", "ADD16",
 ENCODINGS = ["UTF-8", "GBK", "GB2312", "ASCII", "latin-1", "UTF-16LE", "UTF-16BE"]
 
 MONO_FONT = QFont("Consolas", 10)
+
+# ================= 主题系统 =================
+# 深浅双主题配色（参考 Catppuccin Mocha / Latte 提取）
+THEMES = {
+    "dark": {
+        "name": "深色",
+        "win_bg": "#1E1E2E",            # 主窗口背景（paintEvent 绘制）
+        "titlebar_bg": "#181825",       # 标题栏背景
+        "titlebar_fg": "#CDD6F4",       # 标题栏文字/按钮
+        "titlebar_hover": "rgba(49,50,68,200)",
+        "titlebar_border": "rgba(49,50,68,200)",
+        "close_hover": "#D20F39",       # 关闭按钮悬停
+        "panel_bg": "#24273A",          # GroupBox 背景
+        "panel_border": "rgba(49,50,68,180)",
+        "edit_bg": "#181825",           # 接收/发送区 QTextEdit 背景
+        "edit_fg": "#CDD6F4",
+        "edit_sel": "rgba(69,71,90,200)",
+        "tab_pane": "#1E1E2E",
+        "tab_sel_bg": "#313244",
+        "tab_sel_fg": "#CDD6F4",
+        "tab_uns_fg": "#6C7086",
+        "tab_hover": "rgba(49,50,68,120)",
+        "status_bg": "#11111B",
+        "status_fg": "#9399B2",
+        "status_border": "rgba(49,50,68,200)",
+        "text_primary": "#CDD6F4",
+        "text_secondary": "#7F849C",
+        "btn_bg": "#313244",
+        "btn_hover": "#45475A",
+        "btn_fg": "#CDD6F4",
+        "input_bg": "#181825",
+        "input_border": "#45475A",
+        "combo_item_bg": "#1E1E2E",
+        "combo_item_sel": "#313244",
+        "list_bg": "#181825",
+        "list_sel": "#313244",
+        "menu_bg": "#1E1E2E",
+        "menu_sel": "#313244",
+        "menu_fg": "#CDD6F4",
+        "scrollbar_handle": "#45475A",
+        "scrollbar_hover": "#585B70",
+        "ok_color": "#A6E3A1",
+        "err_color": "#F38BA8",
+        "cs_border": "#FAB387",         # 校验高亮边框（橙）
+        "cs_bg": "rgba(250,179,135,45)",
+        "link_color": "#89B4FA",
+        "accent": "#89B4FA",
+    },
+    "light": {
+        "name": "浅色",
+        "win_bg": "#EFF1F5",
+        "titlebar_bg": "#E6E9EF",
+        "titlebar_fg": "#4C4F69",
+        "titlebar_hover": "rgba(204,208,218,120)",
+        "titlebar_border": "rgba(204,208,218,180)",
+        "close_hover": "#D20F39",
+        "panel_bg": "#FFFFFF",
+        "panel_border": "rgba(204,208,218,180)",
+        "edit_bg": "#FFFFFF",
+        "edit_fg": "#4C4F69",
+        "edit_sel": "rgba(188,192,204,180)",
+        "tab_pane": "#EFF1F5",
+        "tab_sel_bg": "#FFFFFF",
+        "tab_sel_fg": "#4C4F69",
+        "tab_uns_fg": "#7C7F93",
+        "tab_hover": "rgba(204,208,218,120)",
+        "status_bg": "#DCE0E8",
+        "status_fg": "#5C5F77",
+        "status_border": "rgba(204,208,218,180)",
+        "text_primary": "#4C4F69",
+        "text_secondary": "#7C7F93",
+        "btn_bg": "#FFFFFF",
+        "btn_hover": "#EFF1F5",
+        "btn_fg": "#4C4F69",
+        "input_bg": "#FFFFFF",
+        "input_border": "#CCD0DA",
+        "combo_item_bg": "#FFFFFF",
+        "combo_item_sel": "#E6E9EF",
+        "list_bg": "#FFFFFF",
+        "list_sel": "#E6E9EF",
+        "menu_bg": "#FFFFFF",
+        "menu_sel": "#E6E9EF",
+        "menu_fg": "#4C4F69",
+        "scrollbar_handle": "#CCD0DA",
+        "scrollbar_hover": "#BCC0CC",
+        "ok_color": "#40A02B",
+        "err_color": "#D20F39",
+        "cs_border": "#FE640B",
+        "cs_bg": "#FFF3E0",
+        "link_color": "#1E66F5",
+        "accent": "#1E66F5",
+    },
+}
+
+
+def _global_qss(t: dict) -> str:
+    """窗口级全局 QSS：标准控件 + 容器统一配色。
+    放在 QApplication 级，弹窗/菜单/右键菜单/滚动条全部跟随主题。
+    复选框对勾由 _ThemeCheckBox.paintEvent 手动绘制（Qt 6 image:url 在
+    sub-control 上不渲染），下拉箭头用系统 native arrow。"""
+    return (
+        f"#titleBar{{background-color:{t['titlebar_bg']};"
+        f"border-bottom:1px solid {t['titlebar_border']};}}"
+        f"#titleBar QLabel{{color:{t['titlebar_fg']};background:transparent;}}"
+        f"#titleBar QToolButton{{background:transparent;border:none;"
+        f"color:{t['titlebar_fg']};padding:0;font-size:14px;"
+        f"font-family:Consolas;}}"
+        f"#titleBar QToolButton:hover{{background:{t['titlebar_hover']};}}"
+        f"#titleBar QToolButton#btn_close:hover{{background:{t['close_hover']};"
+        f"color:white;}}"
+        f"#titleBar QToolButton#btn_theme{{font-family:\"Segoe UI\","
+        f"\"Segoe UI Emoji\",\"Apple Color Emoji\",\"Noto Color Emoji\",sans-serif;"
+        f"font-size:14px;}}"
+        f"QWidget{{background-color:{t['win_bg']};color:{t['text_primary']};}}"
+        f"QLabel{{background:transparent;color:{t['text_primary']};}}"
+        f"QGroupBox{{background-color:{t['panel_bg']};border:1px solid {t['panel_border']};"
+        f"border-radius:8px;}}"
+        f"QPushButton{{background-color:{t['btn_bg']};color:{t['btn_fg']};"
+        f"border:1px solid {t['input_border']};border-radius:5px;padding:3px 6px;}}"
+        f"QPushButton:hover{{background-color:{t['btn_hover']};}}"
+        f"QPushButton:pressed{{background-color:{t['panel_border']};}}"
+        f"QPushButton:disabled{{color:{t['text_secondary']};}}"
+        f"QLineEdit{{background-color:{t['input_bg']};color:{t['text_primary']};"
+        f"border:1px solid {t['input_border']};border-radius:5px;padding:2px 6px;}}"
+        f"QLineEdit:focus{{border-color:{t['accent']};}}"
+        f"QComboBox{{background-color:{t['input_bg']};color:{t['text_primary']};"
+        f"border:1px solid {t['input_border']};border-radius:5px;padding:2px 8px;}}"
+        f"QComboBox:hover{{border-color:{t['accent']};}}"
+        # 缓存箭头 PNG（提前生成用于 QSS），用 file:// URL 作为 drop-down 区域 background
+        #（Qt 6 image:url 在 sub-control 不渲染，background-image 在 sub-control 区域可用）
+        f"QComboBox::drop-down{{border:none;subcontrol-origin:padding;"
+        f"subcontrol-position:top right;width:20px;height:100%;"
+        f"background-image:url(\"{_cache_pixmap(_make_arrow_pixmap(t['input_border']), 'sscom_arrow.png')}\");"
+        f"background-position:center;background-repeat:no-repeat;}}"
+        f"QComboBox QAbstractItemView{{background-color:{t['combo_item_bg']};"
+        f"color:{t['text_primary']};selection-background-color:{t['combo_item_sel']};"
+        f"border:1px solid {t['input_border']};}}"
+        f"QTextEdit{{background-color:{t['edit_bg']};color:{t['edit_fg']};"
+        f"selection-background-color:{t['edit_sel']};border:none;}}"
+        f"QTabWidget::pane{{background-color:{t['tab_pane']};border:1px solid {t['panel_border']};"
+        f"border-radius:6px;top:-1px;}}"
+        f"QTabBar::tab{{background:transparent;padding:5px 12px;color:{t['tab_sel_fg']};}}"
+        f"QTabBar::tab:selected{{background:{t['tab_sel_bg']};border:1px solid {t['panel_border']};"
+        f"border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}}"
+        f"QTabBar::tab:!selected{{background:transparent;color:{t['tab_uns_fg']};}}"
+        f"QTabBar::tab:hover:!selected{{background:{t['tab_hover']};}}"
+        f"QListWidget{{background-color:{t['list_bg']};color:{t['text_primary']};"
+        f"border:1px solid {t['input_border']};border-radius:5px;}}"
+        f"QListWidget::item{{padding:2px 6px;}}"
+        f"QListWidget::item:selected{{background-color:{t['list_sel']};"
+        f"color:{t['text_primary']};}}"
+        f"QScrollArea{{border:none;background:transparent;}}"
+        f"QScrollArea > QWidget > QWidget{{background:transparent;}}"
+        f"QMenu{{background-color:{t['menu_bg']};color:{t['menu_fg']};"
+        f"border:1px solid {t['input_border']};}}"
+        f"QMenu::item{{padding:4px 18px;background:transparent;}}"
+        f"QMenu::item:selected{{background-color:{t['menu_sel']};}}"
+        f"QScrollBar:vertical{{background:transparent;width:10px;margin:0;}}"
+        f"QScrollBar::handle:vertical{{background:{t['scrollbar_handle']};"
+        f"border-radius:5px;min-height:24px;}}"
+        f"QScrollBar::handle:vertical:hover{{background:{t['scrollbar_hover']};}}"
+        f"QScrollBar:horizontal{{background:transparent;height:10px;margin:0;}}"
+        f"QScrollBar::handle:horizontal{{background:{t['scrollbar_handle']};"
+        f"border-radius:5px;min-width:24px;}}"
+        f"QScrollBar::add-line, QScrollBar::sub-line{{height:0;width:0;}}"
+        f"QScrollBar::add-page, QScrollBar::sub-page{{background:transparent;}}"
+        f"QToolTip{{background-color:{t['menu_bg']};color:{t['menu_fg']};"
+        f"border:1px solid {t['input_border']};}}"
+        f"#statusBar{{background-color:{t['status_bg']};color:{t['status_fg']};"
+        f"border-top:1px solid {t['status_border']};}}"
+        f"#statusBar QLabel{{color:{t['status_fg']};background:transparent;}}"
+        f"QFrame#cs_group{{border:none;background:transparent;}}"
+        f"QFrame#cs_group[cs_highlight=\"true\"]{{border:1px solid {t['cs_border']};"
+        f"border-radius:3px;background:{t['cs_bg']};}}"
+    )
 
 
 def now_ts() -> str:
@@ -96,6 +276,149 @@ class SerialReader(QThread):
         self.running = False
 
 
+# ================= 标题栏主题切换按钮 SVG 图标 =================
+# 替代 emoji 字符（避免系统字体回退 + emoji 太大/彩色问题）；
+# 颜色由 SerialTool.apply_theme 动态注入（CURRENT 占位符）。
+_MOON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+    '<path d="M11 3 a7 7 0 1 0 4 10 5.5 5.5 0 0 1 -4 -10 z" fill="CURRENT"/>'
+    '</svg>'
+)
+# 简化为亮色实心圆（去掉 8 光芒线）
+_SUN_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+    '<circle cx="8" cy="8" r="6" fill="CURRENT"/>'
+    '</svg>'
+)
+
+
+def _make_theme_icon(svg_template: str, color: str, size: int = 14) -> QIcon:
+    """把 SVG 模板（fill="CURRENT" 占位符）渲染成 QIcon，size x size 透明背景。"""
+    svg = svg_template.replace("CURRENT", color)
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _png_data_url(pixmap: QPixmap) -> str:
+    """把 QPixmap 序列化为 base64 PNG data URL（用作 QSS image:url）。"""
+    ba = QByteArray()
+    from PySide6.QtCore import QBuffer, QIODevice
+    buf = QBuffer(ba)
+    buf.open(QIODevice.WriteOnly)
+    pixmap.save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(ba.data()).decode("ascii")
+
+
+def _cache_pixmap(pixmap: QPixmap, name: str) -> str:
+    """把 PNG pixmap 写入程序目录 cache/ 目录并返回 file:// URL。
+    写文件比 data: URL 更可靠（Qt 6 对 sub-control 的 data: URL 渲染有兼容问题）。"""
+    cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    path = os.path.join(cache_dir, name)
+    pixmap.save(path, "PNG")
+    # Windows 路径转 file:// URL
+    url = "file:///" + path.replace("\\", "/")
+    return url
+
+
+def _make_check_pixmap(bg_color: str) -> QPixmap:
+    """复选框对勾 PNG：bg_color 实心圆角矩形 + 白色对勾（18x18，3px 圆角）。"""
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.transparent)
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    # 背景圆角矩形
+    p.setBrush(QColor(bg_color))
+    p.setPen(Qt.NoPen)
+    p.drawRoundedRect(0, 0, 18, 18, 3, 3)
+    # 白色对勾
+    pen = QPen(Qt.white)
+    pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.drawLine(3, 9, 7, 13)
+    p.drawLine(7, 13, 14, 4)
+    p.end()
+    return pixmap
+
+
+def _make_arrow_pixmap(fill_color: str) -> QPixmap:
+    """下拉箭头 PNG：fill_color 倒三角（10x10）。"""
+    pixmap = QPixmap(10, 10)
+    pixmap.fill(Qt.transparent)
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setBrush(QColor(fill_color))
+    p.setPen(Qt.NoPen)
+    # 倒三角：顶部边 y=3, 底部点 y=7
+    p.drawPolygon(QPolygon([QPoint(1, 3), QPoint(9, 3), QPoint(5, 7)]))
+    p.end()
+    return pixmap
+
+
+class _ThemeCheckBox(QCheckBox):
+    """主题化复选框：checked 时显示 accent 蓝底 + 白色对勾（手动绘制，
+    绕开 Qt 6 image:url() 在 sub-control 上不渲染的兼容问题）。"""
+
+    def __init__(self, text: str = ""):
+        super().__init__(text)
+        self._tc = {}
+
+    def set_theme_colors(self, t: dict):
+        self._tc = t
+        self._refresh_style()
+
+    def _refresh_style(self):
+        """按当前主题色单独设置 QSS（避免与全局 QSS 中 ::indicator 规则冲突）。"""
+        if not self._tc:
+            return
+        t = self._tc
+        # checked 状态背景 = accent
+        # unchecked = input_bg / input_border
+        self.setStyleSheet(
+            f"QCheckBox{{color:{t['text_primary']};background:transparent;"
+            f"spacing:4px;}}"
+            f"QCheckBox::indicator{{width:18px;height:18px;border:1px solid "
+            f"{t['input_border']};border-radius:3px;background:{t['input_bg']};}}"
+            f"QCheckBox::indicator:hover{{border-color:{t['accent']};}}"
+            f"QCheckBox::indicator:checked{{background-color:{t['accent']};"
+            f"border-color:{t['accent']};}}"
+        )
+
+    def paintEvent(self, event):
+        # 用 QSS ::indicator 渲染 indicator 容器（背景+边框）
+        super().paintEvent(event)
+        # 手动绘制白色对勾（QSS image:url 在 sub-control 不渲染）
+        if not self.isChecked() or not self._tc:
+            return
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            opt = QStyleOptionButton()
+            self.initStyleOption(opt)
+            ind_rect = self.style().subElementRect(
+                QStyle.SE_CheckBoxIndicator, opt, self)
+            pen = QPen(Qt.white)
+            pen.setWidth(2)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            x, y, w, h = ind_rect.x(), ind_rect.y(), ind_rect.width(), ind_rect.height()
+            painter.drawLine(int(x + w * 0.2), int(y + h * 0.55),
+                              int(x + w * 0.45), int(y + h * 0.75))
+            painter.drawLine(int(x + w * 0.45), int(y + h * 0.75),
+                              int(x + w * 0.8), int(y + h * 0.25))
+        finally:
+            painter.end()
+
+
 class _TitleBar(QWidget):
     """自绘标题栏（无边框窗口用）：颜色完全可控，不受 Windows 系统失焦变白影响。
     含图标、标题文字、最小化/最大化/关闭按钮，支持拖动、双击最大化、右键菜单。"""
@@ -106,14 +429,6 @@ class _TitleBar(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFixedHeight(30)
         self.setObjectName("titleBar")
-        self.setStyleSheet(
-            "#titleBar{background-color:#CCDFE6;border-bottom:1px solid rgba(130,158,180,80);}"
-            "QLabel{color:#3a4a5a;background:transparent;}"
-            "QToolButton{background:transparent;border:none;color:#3a4a5a;"
-            "padding:2px 10px;font-size:13px;font-family:Consolas;}"
-            "QToolButton:hover{background:rgba(130,158,180,80);}"
-            "QToolButton#btn_close:hover{background:#e81123;color:white;}"
-        )
         h = QHBoxLayout(self)
         h.setContentsMargins(8, 0, 2, 0)
         h.setSpacing(2)
@@ -125,10 +440,19 @@ class _TitleBar(QWidget):
         self.lbl_icon.setFixedSize(18, 18)
         h.addWidget(self.lbl_icon)
         self.lbl_title = QLabel(parent.windowTitle())
+        # 版本号跟随窗口标题（v{APP_VERSION}），标题栏左上角显示
+        self.lbl_title.setText(f"{APP_TITLE}  v{APP_VERSION}")
         self.lbl_title.setStyleSheet("padding-left:4px;")
         h.addWidget(self.lbl_title)
         h.addStretch(1)
-        # 按钮
+        # 按钮：主题切换（最小化左侧）→ 最小化 → 最大化 → 关闭
+        # btn_theme 用 SVG icon（月亮/太阳，颜色随主题变化），不用 emoji
+        # 避免系统字体回退不可靠 + emoji 太大彩色问题
+        self.btn_theme = QToolButton(self)
+        self.btn_theme.setObjectName("btn_theme")
+        self.btn_theme.setIconSize(QSize(14, 14))
+        self.btn_theme.setToolTip("切换到深色模式")
+        self.btn_theme.clicked.connect(parent.toggle_theme)
         self.btn_min = QToolButton(self); self.btn_min.setText("—"); self.btn_min.setToolTip("最小化")
         self.btn_max = QToolButton(self); self.btn_max.setText("□"); self.btn_max.setToolTip("最大化")
         self.btn_close = QToolButton(self); self.btn_close.setText("✕")
@@ -136,12 +460,24 @@ class _TitleBar(QWidget):
         self.btn_min.clicked.connect(parent.showMinimized)
         self.btn_max.clicked.connect(self._toggle_max)
         self.btn_close.clicked.connect(parent.close)
-        for b in (self.btn_min, self.btn_max, self.btn_close):
+        for b in (self.btn_theme, self.btn_min, self.btn_max, self.btn_close):
             b.setFixedSize(30, 30)
             h.addWidget(b)
         # 拖动 / 双击 / 右键
         self._pressed = False
         self._drag_pos = None
+
+    def apply_theme(self, t: dict, theme_name: str):
+        """标题栏配色由全局 QSS 的 #titleBar 选择器统一控制（不自设样式表，
+        避免阻断子控件/QMenu 继承全局主题）。此处仅更新主题切换按钮 SVG icon
+        （颜色用主题文字色，浅色模式深月亮/深色模式亮太阳）。"""
+        icon_color = t["titlebar_fg"]
+        if theme_name == "dark":      # 当前深色 → 显示亮色太阳（点击切回浅色）
+            self.btn_theme.setIcon(_make_theme_icon(_SUN_SVG, icon_color))
+            self.btn_theme.setToolTip("切换到浅色模式")
+        else:                         # 当前浅色 → 显示深色月亮（点击切到深色）
+            self.btn_theme.setIcon(_make_theme_icon(_MOON_SVG, icon_color))
+            self.btn_theme.setToolTip("切换到深色模式")
 
     def _toggle_max(self):
         w = self._win
@@ -250,8 +586,11 @@ class SerialTool(QWidget):
         self._cs_preview_timer = None
         self._search_timer = None
         self._ms_row_widgets = []
+        self._theme = "light"                     # 当前主题（dark / light）
+        self._win_bg = THEMES["light"]["win_bg"]  # paintEvent 画背景用
 
         self._build_ui()
+        self.apply_theme(self._theme)   # 初始应用主题（QApplication 级 QSS）
         self._refresh_ports()
         self._autoload_config()
 
@@ -411,16 +750,16 @@ class SerialTool(QWidget):
             pass
 
     def paintEvent(self, e):
-        """画窗口不透明背景（#CCDFE6）。WA_TranslucentBackground 下 QSS 背景在某些
+        """画窗口不透明背景（主题色 win_bg）。WA_TranslucentBackground 下 QSS 背景在某些
         子区域失效，必须用 QPainter 直接画。系统圆角负责裁剪圆角外的部分。"""
-        QPainter(self).fillRect(self.rect(), QColor("#CCDFE6"))
+        QPainter(self).fillRect(self.rect(), QColor(self._win_bg))
 
     # ================= UI 构建 =================
     def _build_ui(self):
         # 无边框 + 透明背景：阴影和圆角由 Windows DWM 系统绘制（窗口外，不占窗口内部）
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setWindowTitle(APP_TITLE)
+        self.setWindowTitle(f"{APP_TITLE}  v{APP_VERSION}")
         self.resize(900, 560)
         self.setMinimumSize(900, 560)
 
@@ -455,9 +794,6 @@ class SerialTool(QWidget):
 
         # 左侧：接收区（只放文字显示；按钮行放在本容器下面）
         recv_box = QGroupBox("")
-        recv_box.setStyleSheet(
-            "QGroupBox{background-color:#F2F2F6;border:1px solid rgba(130,158,180,60);"
-            "border-radius:8px;}")
         recv_lay = QVBoxLayout(recv_box)
         recv_lay.setContentsMargins(8, 6, 8, 6)
         recv_lay.setSpacing(2)
@@ -466,9 +802,6 @@ class SerialTool(QWidget):
         self.txt_recv.setReadOnly(True)
         self.txt_recv.setFont(MONO_FONT)
         self.txt_recv.setLineWrapMode(QTextEdit.WidgetWidth)
-        self.txt_recv.setStyleSheet(
-            "QTextEdit{background:#FFFFFF;color:#2b2b2b;selection-background-color:#b8d7ff;"
-            "border:none;}")
         recv_lay.addWidget(self.txt_recv, 1)
 
         upper_row.addWidget(recv_box, 1)
@@ -477,14 +810,6 @@ class SerialTool(QWidget):
         self.ms_tabs = QTabWidget()
         # 命令面板固定为最小宽度 420，禁止左右拖拽改变大小
         self.ms_tabs.setFixedWidth(420)
-        self.ms_tabs.setStyleSheet(
-            "QTabWidget::pane{background-color:#ECF5F9;border:1px solid rgba(130,158,180,110);"
-            "border-radius:6px;top:-1px;}"
-            "QTabBar::tab{background:transparent;padding:5px 12px;color:#3a4a5a;}"
-            "QTabBar::tab:selected{background:#ECF5F9;border:1px solid rgba(130,158,180,110);"
-            "border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
-            "QTabBar::tab:!selected{background:transparent;color:#6a7a8a;}"
-            "QTabBar::tab:hover:!selected{background:rgba(130,158,180,40);}")
         self._build_history_tab()
         self._build_ms_tab()
         self.ms_tabs.hide()
@@ -496,10 +821,13 @@ class SerialTool(QWidget):
         rt = QHBoxLayout()
         rt.setSpacing(4)
         btn = QPushButton("清除窗口"); btn.clicked.connect(self._clear_recv); rt.addWidget(btn)
-        self.chk_show_hex = QCheckBox("HEX显示"); rt.addWidget(self.chk_show_hex)
-        self.chk_show_ts = QCheckBox("加时间戳和分包显示")
+        self.chk_show_hex = _ThemeCheckBox("HEX显示"); rt.addWidget(self.chk_show_hex)
+        self.chk_show_ts = _ThemeCheckBox("时间戳")
+        self.chk_show_ts.setToolTip("显示时间戳和分包（多行数据每行加前缀）")
         self.chk_show_ts.setChecked(True); rt.addWidget(self.chk_show_ts)
-        self.chk_pause = QCheckBox("暂停刷新"); rt.addWidget(self.chk_pause)
+        # 切换时间戳时立即重建缓存消息视图（显示/移除已收消息的时间戳）
+        self.chk_show_ts.stateChanged.connect(self._refresh_view)
+        self.chk_pause = _ThemeCheckBox("暂停刷新"); rt.addWidget(self.chk_pause)
         rt.addWidget(QLabel("编码:"))
         self.cmb_encoding = QComboBox()
         self.cmb_encoding.addItems(ENCODINGS)
@@ -511,7 +839,7 @@ class SerialTool(QWidget):
         self.entry_search.setMaximumWidth(180)
         self.entry_search.textChanged.connect(self._on_search_change)
         rt.addWidget(self.entry_search)
-        self.chk_filter = QCheckBox("筛选")
+        self.chk_filter = _ThemeCheckBox("筛选")
         self.chk_filter.stateChanged.connect(self._refresh_view)
         rt.addWidget(self.chk_filter)
         btn = QPushButton("保存数据"); btn.clicked.connect(self._save_recv); rt.addWidget(btn)
@@ -531,9 +859,6 @@ class SerialTool(QWidget):
         # 左侧：串口设置块
         sb_box = QGroupBox("")
         sb_box.setMaximumWidth(290)
-        sb_box.setStyleSheet(
-            "QGroupBox{background-color:#F2F2F6;border:1px solid rgba(130,158,180,60);"
-            "border-radius:8px;}")
         sb = QVBoxLayout(sb_box)
         sb.setContentsMargins(6, 6, 6, 6)
         sb.setSpacing(2)
@@ -583,9 +908,6 @@ class SerialTool(QWidget):
 
         # 右侧：发送区
         send_box = QGroupBox("")
-        send_box.setStyleSheet(
-            "QGroupBox{background-color:#F2F2F6;border:1px solid rgba(130,158,180,60);"
-            "border-radius:8px;}")
         send_lay = QVBoxLayout(send_box)
         send_lay.setContentsMargins(8, 6, 8, 6)
         send_lay.setSpacing(3)
@@ -629,7 +951,6 @@ class SerialTool(QWidget):
         self.cmb_checksum.setFixedWidth(110)
         cs_lay.addWidget(self.cmb_checksum)
         self.lbl_cs_result = QLabel("")
-        self.lbl_cs_result.setStyleSheet("color:#c00;font-weight:bold;")
         cs_lay.addWidget(self.lbl_cs_result)
         fb.addWidget(self.cs_group)
         self.cmb_checksum.currentIndexChanged.connect(self._update_cs_highlight)
@@ -644,11 +965,11 @@ class SerialTool(QWidget):
         self.btn_send.clicked.connect(self._send)
         sbar.addWidget(self.btn_send)
         btn = QPushButton("清空发送"); btn.clicked.connect(self._clear_send); sbar.addWidget(btn)
-        self.chk_send_hex = QCheckBox("HEX发送")
+        self.chk_send_hex = _ThemeCheckBox("HEX发送")
         self.chk_send_hex.stateChanged.connect(self._on_send_hex_toggle)
         sbar.addWidget(self.chk_send_hex)
-        self.chk_add_crlf = QCheckBox("加回车换行"); sbar.addWidget(self.chk_add_crlf)
-        self.chk_timer = QCheckBox("定时发送:")
+        self.chk_add_crlf = _ThemeCheckBox("加回车换行"); sbar.addWidget(self.chk_add_crlf)
+        self.chk_timer = _ThemeCheckBox("定时发送:")
         self.chk_timer.stateChanged.connect(self._on_timer_toggle)
         sbar.addWidget(self.chk_timer)
         self.entry_interval = QLineEdit("1000")
@@ -661,17 +982,14 @@ class SerialTool(QWidget):
         self.txt_send = QTextEdit()
         self.txt_send.setFont(MONO_FONT)
         self.txt_send.setFixedHeight(90)
-        self.txt_send.setStyleSheet("QTextEdit{background:#fafafa;color:#222;}")
         self.txt_send.textChanged.connect(self._update_cs_preview)
         send_lay.addWidget(self.txt_send, 1)
         lower.addWidget(send_box, 1)
 
         # ===== 状态栏（自建 widget，放进卡片底部，宽度与卡片一致）=====
         self.status_bar = QWidget()
+        self.status_bar.setObjectName("statusBar")
         self.status_bar.setAttribute(Qt.WA_StyledBackground, True)
-        self.status_bar.setStyleSheet(
-            "QWidget{background-color:#CCDFE6;color:#3a4a5a;"
-            "border-top:1px solid rgba(130,158,180,80);}")
         sb_lay = QHBoxLayout(self.status_bar)
         sb_lay.setContentsMargins(6, 1, 6, 1)
         sb_lay.setSpacing(8)
@@ -681,7 +999,7 @@ class SerialTool(QWidget):
         sb_lay.addWidget(self.lbl_sr)
         self.lbl_handshake = QLabel("CTS=0 DSR=0 RLSD=0")
         sb_lay.addWidget(self.lbl_handshake)
-        self.lbl_app = QLabel('<a href="github" style="color:#1a5fb4;">SJJ‑COM Tool</a>')
+        self.lbl_app = QLabel(f'<a href="github" style="color:{THEMES["light"]["link_color"]};">SJJ‑COM Tool</a>')
         self.lbl_app.setOpenExternalLinks(False)
         self.lbl_app.linkActivated.connect(lambda _l: self._open_github())
         self.lbl_app.setCursor(Qt.PointingHandCursor)
@@ -695,6 +1013,35 @@ class SerialTool(QWidget):
         # 多字符串循环发送
         self.ms_loop_timer = QTimer(self)
         self.ms_loop_timer.timeout.connect(self._ms_loop_tick)
+
+    # ================= 主题 =================
+    def apply_theme(self, theme_name: str):
+        """应用主题：设置全局 QSS（QApplication 级）+ 标题栏 + 状态栏文字等。"""
+        if theme_name not in THEMES:
+            theme_name = "light"
+        self._theme = theme_name
+        t = THEMES[theme_name]
+        self._win_bg = t["win_bg"]
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(_global_qss(t))
+        self.title_bar.apply_theme(t, theme_name)
+        self.lbl_ms_hint.setStyleSheet(f"color:{t['text_secondary']};")
+        self.lbl_cs_result.setStyleSheet(f"color:{t['err_color']};font-weight:bold;")
+        self.lbl_app.setText(
+            f'<a href="github" style="color:{t["link_color"]};">SJJ‑COM Tool</a>')
+        # 主题化复选框：手动绘制，传入颜色
+        for cb in self.findChildren(_ThemeCheckBox):
+            cb.set_theme_colors(t)
+        self._update_cs_highlight()
+        self._refresh_status()
+        self.update()   # 立即触发 paintEvent 重画窗口背景
+
+    def toggle_theme(self):
+        """标题栏按钮：深色 ↔ 浅色 切换，并持久化到配置。"""
+        new_theme = "dark" if self._theme == "light" else "light"
+        self.apply_theme(new_theme)
+        self._save_params(silent=True)
 
     # ================= 历史记录 Tab =================
     def _build_history_tab(self):
@@ -746,7 +1093,7 @@ class SerialTool(QWidget):
         btn = QPushButton("＋ 新建"); btn.clicked.connect(self._new_ms_entry); bar.addWidget(btn)
         line = QFrame(); line.setFrameShape(QFrame.VLine); line.setFrameShadow(QFrame.Sunken)
         bar.addWidget(line)
-        self.chk_ms_loop = QCheckBox("循环发送"); bar.addWidget(self.chk_ms_loop)
+        self.chk_ms_loop = _ThemeCheckBox("循环发送"); bar.addWidget(self.chk_ms_loop)
         bar.addWidget(QLabel("间隔ms:"))
         self.entry_ms_interval = QLineEdit("1000")
         self.entry_ms_interval.setFixedWidth(56)
@@ -759,9 +1106,8 @@ class SerialTool(QWidget):
         bar.addStretch(1)
         lay.addLayout(bar)
 
-        hint = QLabel("HEX  发送内容（可编辑）            按钮（右键改名 / 点发）")
-        hint.setStyleSheet("color:#666;")
-        lay.addWidget(hint)
+        self.lbl_ms_hint = QLabel("HEX  发送内容（可编辑）            按钮（右键改名 / 点发）")
+        lay.addWidget(self.lbl_ms_hint)
 
         self.ms_scroll = QScrollArea()
         self.ms_scroll.setWidgetResizable(True)
@@ -783,7 +1129,7 @@ class SerialTool(QWidget):
         self._ms_row_widgets = []
         for i, e in enumerate(self.ms_entries):
             row = QHBoxLayout()
-            chk = QCheckBox("HEX")
+            chk = _ThemeCheckBox("HEX")
             chk.setChecked(e["hex"])
             chk.stateChanged.connect(lambda _s, i=i: self._ms_set_hex(i, chk.isChecked()))
             row.addWidget(chk)
@@ -1026,7 +1372,7 @@ class SerialTool(QWidget):
             self.reader.start()
             self.btn_open.setText("关闭串口")
             self._refresh_status()
-            self._add_record("sys", f"\n{now_ts()} 串口已打开: {port} @ {baud}\n")
+            self._add_record("sys", f"串口已打开: {port} @ {baud}")
         except Exception as e:
             QMessageBox.critical(self, "打开失败", str(e))
             self.ser = None
@@ -1049,16 +1395,16 @@ class SerialTool(QWidget):
         self.ser = None
         self.btn_open.setText("打开串口")
         self._refresh_status()
-        self._add_record("sys", f"{now_ts()} 串口已关闭\n")
+        self._add_record("sys", "串口已关闭")
 
     def _on_serial_data(self, data: bytes):
         self.rx_bytes += len(data)
-        self.pending_rx.append(self._format_rx(data))
+        self.pending_rx.append(self._rx_body(data))
         if len(self.pending_rx) > MAX_RECORDS:
             self.pending_rx = self.pending_rx[-MAX_RECORDS:]
 
     def _on_serial_error(self, msg: str):
-        self._add_record("sys", f"\n[读取异常] {msg}\n")
+        self._add_record("sys", f"[读取异常] {msg}")
         self._close_port()
 
     def _refresh_status(self):
@@ -1066,53 +1412,54 @@ class SerialTool(QWidget):
         flow_short = FLOW_SHORT.get(self.var_flow, "N")
         param = (f"{self.cmb_baud.currentText()},{self.var_databits},"
                  f"{self.var_parity[0]},{self.var_stopbits},{flow_short}")
+        t = THEMES[self._theme]
         if self.ser and self.ser.is_open:
             self.lbl_status.setText(f"{port} 已打开 {param}")
-            self.lbl_status.setStyleSheet("color:green;")
+            self.lbl_status.setStyleSheet(f"color:{t['ok_color']};")
         else:
             self.lbl_status.setText(f"{port} 已关闭 {param}")
-            self.lbl_status.setStyleSheet("color:black;")
+            self.lbl_status.setStyleSheet(f"color:{t['text_primary']};")
 
     # ================= 接收渲染 =================
-    def _format_rx(self, data: bytes) -> str:
+    def _rx_body(self, data: bytes) -> str:
+        """把收到的字节转成原始文本（HEX 或按编码解码，不含时间戳/箭头前缀）。"""
         if self.chk_show_hex.isChecked():
-            body = " ".join(f"{b:02X}" for b in data)
-        else:
-            enc = self.cmb_encoding.currentText()
-            try:
-                body = data.decode(enc, errors="replace")
-            except LookupError:
-                body = data.decode("utf-8", errors="replace")
-            except Exception:
-                body = data.decode("latin-1", errors="replace")
-        if self.chk_show_ts.isChecked():
-            mark = now_ts() + "<"
-            indent = " " * len(mark)
-            text = ("\n" + indent).join(body.split("\n"))
-            out = mark + text
-        else:
-            out = body
-        return out + "\n"
+            return " ".join(f"{b:02X}" for b in data)
+        enc = self.cmb_encoding.currentText()
+        try:
+            return data.decode(enc, errors="replace")
+        except LookupError:
+            return data.decode("utf-8", errors="replace")
+        except Exception:
+            return data.decode("latin-1", errors="replace")
 
-    def _format_tx(self, echo: str) -> str:
-        if self.chk_show_ts.isChecked():
-            mark = now_ts() + ">"
-        else:
-            mark = ""
+    def _render_record(self, rec) -> str:
+        """按当前"时间戳"开关把缓存记录（原始内容 raw）渲染为显示文本。
+        rx 恒带 <、tx 恒带 > 指示箭头（时间戳可选）；sys 消息时间戳可选。"""
+        kind = rec["kind"]
+        raw = rec["raw"]
+        if kind == "rx":
+            mark = now_ts() + "<" if self.chk_show_ts.isChecked() else "<"
+        elif kind == "tx":
+            mark = now_ts() + ">" if self.chk_show_ts.isChecked() else ">"
+        else:  # sys
+            mark = now_ts() + " " if self.chk_show_ts.isChecked() else ""
+        # 多行数据：续行对齐到 mark 宽度（分包显示）
         indent = " " * len(mark)
-        text = ("\n" + indent).join(echo.split("\n"))
+        text = ("\n" + indent).join(raw.split("\n"))
         return mark + text + "\n"
 
-    def _add_record(self, kind: str, display: str):
-        """把一条消息存入内存并追加到接收区（暂停刷新时停止自动滚动）。"""
-        self.records.append({"kind": kind, "display": display})
-        self._append_to_view([display])
+    def _add_record(self, kind: str, raw: str):
+        """存一条消息的原始内容（不含时间戳），渲染时按当前开关格式化。"""
+        self.records.append({"kind": kind, "raw": raw})
+        self._append_to_view([self._render_record({"kind": kind, "raw": raw})])
 
-    def _add_records_batch(self, displays):
-        """批量追加接收消息（一次插入，性能好）。"""
-        for d in displays:
-            self.records.append({"kind": "rx", "display": d})
-        self._append_to_view(displays)
+    def _add_records_batch(self, bodies):
+        """批量追加接收消息的原始内容（一次插入，性能好）。"""
+        for b in bodies:
+            self.records.append({"kind": "rx", "raw": b})
+        self._append_to_view([self._render_record({"kind": "rx", "raw": b})
+                              for b in bodies])
 
     def _append_to_view(self, displays):
         self._program_scroll = True
@@ -1125,7 +1472,7 @@ class SerialTool(QWidget):
                 if self.chk_filter.isChecked():
                     self._refresh_view()
                     return
-                del_lines = sum(r["display"].count("\n") for r in removed)
+                del_lines = sum(self._render_record(r).count("\n") for r in removed)
                 self._delete_top_lines(del_lines)
 
             needle = self.entry_search.text()
@@ -1155,7 +1502,7 @@ class SerialTool(QWidget):
         cursor.removeSelectedText()
 
     def _refresh_view(self):
-        """按 筛选/搜索 状态从内存 records 重建接收区视图。"""
+        """按 筛选/搜索/时间戳开关 状态从内存 records 重建接收区视图。"""
         needle = self.entry_search.text()
         filt = self.chk_filter.isChecked()
         self._program_scroll = True
@@ -1163,10 +1510,11 @@ class SerialTool(QWidget):
             self.txt_recv.blockSignals(True)
             self.txt_recv.clear()
             for rec in self.records:
-                if filt and needle and needle.lower() not in rec["display"].lower():
+                rendered = self._render_record(rec)
+                if filt and needle and needle.lower() not in rendered.lower():
                     continue
                 self.txt_recv.moveCursor(QTextCursor.End)
-                self.txt_recv.insertPlainText(rec["display"])
+                self.txt_recv.insertPlainText(rendered)
             self.txt_recv.blockSignals(False)
             self._apply_highlight()
             if not self.chk_pause.isChecked():
@@ -1315,15 +1663,17 @@ class SerialTool(QWidget):
         return data[lo:hi]
 
     def _update_cs_highlight(self, *_):
-        """加校验≠None 时，校验参数整组高亮（橙色边框+浅橙底）；None 恢复无框。"""
+        """加校验≠None 时，校验参数整组高亮（主题橙色边框+浅橙底）；None 恢复无框。
+        通过动态属性 cs_highlight 驱动全局 QSS 的属性选择器，避免子控件样式被截断。"""
         if not hasattr(self, "cs_group"):
             return
-        if self.cmb_checksum.currentText() != "None":
-            self.cs_group.setStyleSheet(
-                "QFrame#cs_group{border:1px solid #e84118;border-radius:3px;"
-                "background:#fff3e0;}")
-        else:
-            self.cs_group.setStyleSheet("")
+        on = self.cmb_checksum.currentText() != "None"
+        if bool(self.cs_group.property("cs_highlight")) == on:
+            return
+        self.cs_group.setProperty("cs_highlight", on)
+        # 属性变化后需要重新应用样式
+        self.cs_group.style().unpolish(self.cs_group)
+        self.cs_group.style().polish(self.cs_group)
 
     def _apply_checksum(self, data: bytes):
         if not data:
@@ -1417,7 +1767,7 @@ class SerialTool(QWidget):
             echo = raw
             if cs_bytes:
                 echo += " [" + " ".join(f"{b:02X}" for b in cs_bytes) + "]"
-        self._add_record("tx", self._format_tx(echo))
+        self._add_record("tx", echo)
 
     def _record_send_history(self, raw: str):
         if not raw:
@@ -1516,7 +1866,7 @@ class SerialTool(QWidget):
                 echo = raw
                 if cs_bytes:
                     echo += " [" + " ".join(f"{b:02X}" for b in cs_bytes) + "]"
-            self._add_record("tx", self._format_tx(echo))
+            self._add_record("tx", echo)
             self._record_send_history(raw)
         except ValueError as ex:
             QMessageBox.critical(self, "HEX错误", str(ex))
@@ -1594,7 +1944,7 @@ class SerialTool(QWidget):
         self._file_offset = 0
         self._file_sending = True
         self.btn_send_file.setText("停止发送")
-        self._add_record("sys", f"{now_ts()} 开始发送文件: {os.path.basename(path)} ({len(data)} 字节)\n")
+        self._add_record("sys", f"开始发送文件: {os.path.basename(path)} ({len(data)} 字节)")
         QTimer.singleShot(0, self._send_file_chunk)
 
     def _send_file_chunk(self):
@@ -1607,7 +1957,7 @@ class SerialTool(QWidget):
         chunk = self._file_data[self._file_offset:self._file_offset + 4096]
         if not chunk:
             self._end_send_file()
-            self._add_record("sys", f"{now_ts()} 文件发送完成\n")
+            self._add_record("sys", "文件发送完成")
             return
         try:
             self.ser.write(chunk)
@@ -1622,7 +1972,7 @@ class SerialTool(QWidget):
     def _stop_send_file(self):
         self._file_sending = False
         self._end_send_file()
-        self._add_record("sys", f"{now_ts()} 文件发送已停止\n")
+        self._add_record("sys", "文件发送已停止")
 
     def _end_send_file(self):
         self._file_sending = False
@@ -1647,7 +1997,7 @@ class SerialTool(QWidget):
             base = os.path.dirname(sys.executable)
         else:
             base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, "ic_xue_xi.png")
+        return os.path.join(base, "imgs", "ic_xue_xi.png")
 
     def _ms_entries_to_data(self):
         return [{"hex": bool(e["hex"]), "content": e["content"], "label": e["label"]}
@@ -1680,6 +2030,7 @@ class SerialTool(QWidget):
             "window_h": self.height(),
             "panel_visible": not self.ms_tabs.isHidden(),
             "panel_tab": self.ms_tabs.currentIndex(),
+            "theme": self._theme,
         }
         try:
             with open(self._config_path(), "w", encoding="utf-8") as f:
@@ -1699,6 +2050,11 @@ class SerialTool(QWidget):
         try:
             with open(self._config_path(), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
+            # 主题优先应用（其余控件样式依赖全局 QSS）
+            theme = cfg.get("theme", "light")
+            if theme not in THEMES:
+                theme = "light"
+            self.apply_theme(theme)
             self.cmb_baud.setCurrentText(cfg.get("baud", "115200"))
             self.var_databits = cfg.get("databits", "8")
             self.var_stopbits = cfg.get("stopbits", "1")
@@ -1824,7 +2180,7 @@ def main():
         pass
     # 应用图标（窗口标题栏 + 任务栏）——打包后从 _MEIPASS 加载，保证图标正确显示
     try:
-        _icon_path = _resource_path("ic_xue_xi.png")
+        _icon_path = _resource_path(os.path.join("imgs", "ic_xue_xi.png"))
         if os.path.exists(_icon_path):
             app.setWindowIcon(QIcon(_icon_path))
     except Exception:

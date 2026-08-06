@@ -29,11 +29,14 @@ jobs:
 
       - name: Generate ICO from PNG (if missing)
         run: |
-          python -c "from PIL import Image; Image.open('ic_xue_xi.png').convert('RGBA').save('ic_xue_xi.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+          python -c "from PIL import Image; Image.open('imgs/ic_xue_xi.png').convert('RGBA').save('imgs/ic_xue_xi.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
 
       - name: Build single-file EXE
+        # 版本号注入：tag 推送(如 v1.2.3)时用 tag 名；手动触发用 dev
+        env:
+          SJJ_COM_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: |
-          pyinstaller --onefile --windowed --icon=ic_xue_xi.ico --name "SJJ-COM-Tool" --add-data "ic_xue_xi.png;." sjj_com_tool.py
+          pyinstaller --onefile --windowed --icon=imgs/ic_xue_xi.ico --name "SJJ-COM-Tool" --add-data "imgs/ic_xue_xi.png;imgs" sjj_com_tool.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
