@@ -1103,6 +1103,8 @@ class SerialTool(QWidget):
         rt.setSpacing(4)
         btn = QPushButton("清除窗口"); btn.clicked.connect(self._clear_recv); rt.addWidget(btn)
         self.chk_show_hex = _ThemeCheckBox("HEX显示"); rt.addWidget(self.chk_show_hex)
+        # 切换 HEX 显示时立即重建视图（rx 记录存原始字节，_render_record 按当前状态格式化）
+        self.chk_show_hex.stateChanged.connect(self._refresh_view)
         self.chk_show_ts = _ThemeCheckBox("时间戳")
         self.chk_show_ts.setToolTip("显示时间戳和分包（多行数据每行加前缀）")
         self.chk_show_ts.setChecked(True); rt.addWidget(self.chk_show_ts)
@@ -1114,6 +1116,8 @@ class SerialTool(QWidget):
         self.cmb_encoding.addItems(ENCODINGS)
         self.cmb_encoding.setEditable(False)
         self.cmb_encoding.setFixedWidth(90)
+        # 切换编码时立即重建视图（文本解码方式变化）
+        self.cmb_encoding.currentTextChanged.connect(self._refresh_view)
         rt.addWidget(self.cmb_encoding)
         rt.addWidget(QLabel("搜索:"))
         self.entry_search = QLineEdit()
@@ -1984,11 +1988,13 @@ class SerialTool(QWidget):
         self._add_record("sys", "串口已关闭")
 
     def _on_serial_data(self, data: bytes, epoch: int):
-        """收到数据。epoch 不匹配说明是已关闭串口排队的残留信号，直接丢弃。"""
+        """收到数据。epoch 不匹配说明是已关闭串口排队的残留信号，直接丢弃。
+        缓冲存 (原始字节, 接收时刻时间戳) 元组——时间戳在接收时固定（不可变），
+        渲染时按当前 HEX/编码开关格式化；顺序 = 接收顺序。"""
         if epoch != self._rx_epoch:
             return
         self.rx_bytes += len(data)
-        self.pending_rx.append(self._rx_body(data))
+        self.pending_rx.append((data, now_ts()))
         if len(self.pending_rx) > MAX_RECORDS:
             self.pending_rx = self.pending_rx[-MAX_RECORDS:]
 
@@ -2014,9 +2020,32 @@ class SerialTool(QWidget):
 
     # ================= 接收渲染 =================
     def _rx_body(self, data: bytes) -> str:
-        """把收到的字节转成原始文本（HEX 或按编码解码，不含时间戳/箭头前缀）。"""
+        """把收到的字节转成原始文本（HEX 或按编码解码，不含时间戳/箭头前缀）。
+        HEX 模式在 \\n（0x0A）字节位置插入换行符（与文本模式数据包边界一致），
+        让 _render_record 的续行缩进能正确对齐到内容列。"""
         if self.chk_show_hex.isChecked():
-            return " ".join(f"{b:02X}" for b in data)
+            # 在 0A（\n）字节前插入换行标记，保持数据包边界 → 续行缩进对齐
+            out = []
+            for i, b in enumerate(data):
+                if b == 0x0A and i > 0:
+                    # 0D 0A 时不要重复换行（0D 后 0A 前已换行；只在 0A 前换行）
+                    out.append("\n")
+                out.append(f"{b:02X}")
+            # 手动连接：非 \n 项前面加空格；\n 项独立成段（前后无空格），
+            # 否则 " ".join 会让 \n 后多一个空格，叠加 indent 后双重缩进
+            text = ""
+            for s in out:
+                if s == "\n":
+                    text += "\n"
+                else:
+                    if text and not text.endswith("\n"):
+                        text += " "
+                    text += s
+            return text
+        return self._decode_bytes(data)
+
+    def _decode_bytes(self, data: bytes) -> str:
+        """按当前编码把字节解码为文本（HEX 发送回显文本模式用）。"""
         enc = self.cmb_encoding.currentText()
         try:
             return data.decode(enc, errors="replace")
@@ -2025,35 +2054,77 @@ class SerialTool(QWidget):
         except Exception:
             return data.decode("latin-1", errors="replace")
 
-    def _render_record(self, rec) -> str:
-        """按当前"时间戳"开关把缓存记录（原始内容 raw）渲染为显示文本。
-        rx 恒带 <、tx 恒带 > 指示箭头（时间戳可选）；sys 消息时间戳可选。"""
+    def _render_parts(self, rec) -> tuple:
+        """返回 (mark, text)：mark=时间戳+箭头（高亮用），text=内容。
+        mark 含尾随空格分隔内容；时间戳固定（rec["ts"]，接收/发出时生成）。
+        rx 恒带 <、tx 恒带 >；HEX/编码按当前开关格式化。"""
         kind = rec["kind"]
         raw = rec["raw"]
+        ts = rec.get("ts") or now_ts()
         if kind == "rx":
-            mark = now_ts() + "<" if self.chk_show_ts.isChecked() else "<"
+            mark = ts + "< " if self.chk_show_ts.isChecked() else "< "
+            if isinstance(raw, bytes):
+                text = self._rx_body(raw)   # 按当前 HEX/编码状态格式化
+            else:
+                text = raw   # 旧格式（已格式化字符串）
         elif kind == "tx":
-            mark = now_ts() + ">" if self.chk_show_ts.isChecked() else ">"
+            mark = ts + "> " if self.chk_show_ts.isChecked() else "> "
+            if "data" in rec and isinstance(rec["data"], bytes):
+                # 新格式（结构化）：按当前 HEX 开关格式化发送回显
+                data = rec["data"]
+                cs = rec.get("cs") or b""
+                body = data[:len(data) - len(cs)] if cs else data
+                if self.chk_show_hex.isChecked():
+                    text = " ".join(f"{b:02X}" for b in body)
+                elif rec.get("hex_input"):
+                    # HEX 发送 + HEX 显示关：把发送字节解码为文本显示
+                    text = self._decode_bytes(body)
+                else:
+                    text = rec.get("raw", "")
+                if cs:
+                    text += " [" + " ".join(f"{b:02X}" for b in cs) + "]"
+            else:
+                text = raw   # 旧格式（已格式化字符串）
         else:  # sys
-            mark = now_ts() + " " if self.chk_show_ts.isChecked() else ""
-        # 多行数据：续行对齐到 mark 宽度（分包显示）
-        indent = " " * len(mark)
-        text = ("\n" + indent).join(raw.split("\n"))
+            mark = ts + " " if self.chk_show_ts.isChecked() else ""
+            text = raw
+        return mark, text
+
+    def _render_record(self, rec) -> str:
+        """把记录渲染为显示字符串（mark + text + 换行）。
+        多行数据保留原始换行（不做续行缩进——QTextEdit word wrap 不受控）。"""
+        mark, text = self._render_parts(rec)
         return mark + text + "\n"
 
+    def _add_tx_record(self, raw: str, data: bytes, cs_bytes: bytes = b"",
+                       hex_input: bool = False):
+        """存一条发送回显：原文 + 实际发送字节 + 校验字节 + 固定时间戳。
+        hex_input=True 表示发送源是 HEX 文本（HEX 显示关时解码为文本显示）。
+        渲染时按当前 HEX 开关格式化（HEX 开 → 16 进制，关 → 原文/解码文本）。"""
+        ts = now_ts()
+        rec = {"kind": "tx", "raw": raw, "data": data, "cs": cs_bytes,
+               "ts": ts, "hex_input": bool(hex_input)}
+        self.records.append(rec)
+        self._append_to_view([rec])
+
     def _add_record(self, kind: str, raw: str):
-        """存一条消息的原始内容（不含时间戳），渲染时按当前开关格式化。"""
-        self.records.append({"kind": kind, "raw": raw})
-        self._append_to_view([self._render_record({"kind": kind, "raw": raw})])
+        """存一条消息的原始内容 + 固定时间戳（收到/发出时刻，不可变），
+        渲染时按当前开关（时间戳/HEX/编码）格式化。"""
+        ts = now_ts()
+        rec = {"kind": kind, "raw": raw, "ts": ts}
+        self.records.append(rec)
+        self._append_to_view([rec])
 
     def _add_records_batch(self, bodies):
-        """批量追加接收消息的原始内容（一次插入，性能好）。"""
-        for b in bodies:
-            self.records.append({"kind": "rx", "raw": b})
-        self._append_to_view([self._render_record({"kind": "rx", "raw": b})
-                              for b in bodies])
+        """批量追加接收消息（bodies 为 (原始字节, 固定时间戳) 元组列表）。
+        顺序 = 接收顺序（_on_serial_data 按序 append），渲染时保持不变。"""
+        recs = [{"kind": "rx", "raw": b, "ts": ts} for b, ts in bodies]
+        self.records.extend(recs)
+        self._append_to_view(recs)
 
-    def _append_to_view(self, displays):
+    def _append_to_view(self, recs):
+        """把记录插入接收区视图：时间戳+箭头（mark）用主题 accent 色加粗高亮，
+        内容用默认色。顺序 = records 顺序。"""
         self._program_scroll = True
         try:
             # 超上限裁剪最旧（保持内存与视图一致）
@@ -2069,13 +2140,28 @@ class SerialTool(QWidget):
 
             needle = self.entry_search.text()
             if self.chk_filter.isChecked() and needle:
-                displays = [d for d in displays if needle.lower() in d.lower()]
-                if not displays:
+                recs = [r for r in recs
+                        if needle.lower() in self._render_record(r).lower()]
+                if not recs:
                     return
 
             cursor = self.txt_recv.textCursor()
             cursor.movePosition(QTextCursor.End)
-            cursor.insertText("".join(displays))
+            accent = self._accent_hex()
+            plain = QTextCharFormat()
+            plain.setForeground(QColor(THEMES[self._theme]["edit_fg"]))
+            plain.setFontWeight(QFont.Normal)
+            for rec in recs:
+                mark, text = self._render_parts(rec)
+                if mark:
+                    fmt = QTextCharFormat()
+                    fmt.setForeground(QColor(accent))
+                    fmt.setFontWeight(QFont.Bold)
+                    cursor.insertText(mark, fmt)
+                # 内容：显式用主题内容色（避免 mark 的高亮/粗体延续到内容）
+                cursor.setCharFormat(plain)
+                cursor.insertText(text)
+                cursor.insertText("\n")
             if needle:
                 self._apply_highlight()
             if not self.chk_pause.isChecked():
@@ -2094,9 +2180,10 @@ class SerialTool(QWidget):
         cursor.removeSelectedText()
 
     def _refresh_view(self):
-        """按 筛选/搜索/时间戳开关 状态从内存 records 重建接收区视图。"""
+        """按 筛选/搜索/时间戳开关 状态从内存 records 重建接收区视图（时间戳+箭头高亮）。"""
         needle = self.entry_search.text()
         filt = self.chk_filter.isChecked()
+        accent = self._accent_hex()
         self._program_scroll = True
         try:
             self.txt_recv.blockSignals(True)
@@ -2105,8 +2192,20 @@ class SerialTool(QWidget):
                 rendered = self._render_record(rec)
                 if filt and needle and needle.lower() not in rendered.lower():
                     continue
-                self.txt_recv.moveCursor(QTextCursor.End)
-                self.txt_recv.insertPlainText(rendered)
+                mark, text = self._render_parts(rec)
+                cursor = self.txt_recv.textCursor()
+                cursor.movePosition(QTextCursor.End)
+                if mark:
+                    fmt = QTextCharFormat()
+                    fmt.setForeground(QColor(accent))
+                    fmt.setFontWeight(QFont.Bold)
+                    cursor.insertText(mark, fmt)
+                # 内容：显式用主题内容色（避免 mark 高亮延续到内容）
+                plain = QTextCharFormat()
+                plain.setForeground(QColor(THEMES[self._theme]["edit_fg"]))
+                plain.setFontWeight(QFont.Normal)
+                cursor.setCharFormat(plain)
+                cursor.insertText(text + "\n")
             self.txt_recv.blockSignals(False)
             self._apply_highlight()
             if not self.chk_pause.isChecked():
@@ -2114,6 +2213,10 @@ class SerialTool(QWidget):
                     self.txt_recv.verticalScrollBar().maximum())
         finally:
             self._program_scroll = False
+
+    def _accent_hex(self) -> str:
+        """当前主题的 accent 色（时间戳+箭头高亮用）。"""
+        return THEMES[self._theme]["accent"]
 
     def _apply_highlight(self):
         needle = self.entry_search.text()
@@ -2247,7 +2350,10 @@ class SerialTool(QWidget):
         if end_off > 0:
             end_off = 0
         lo = start - 1
-        hi = len(data) + end_off
+        hi = len(data)
+        if end_off < 0:
+            # 按 end_off 老实排除末尾 N 字节（不含任何特殊处理）
+            hi = len(data) + end_off
         if hi > len(data):
             hi = len(data)
         if hi <= lo:
@@ -2302,6 +2408,9 @@ class SerialTool(QWidget):
                 self.lbl_cs_result.setText("")
                 return
             data = self._encode_send_text(raw)
+            # 与发送一致：先加回车换行，再算校验（CRLF 参与校验计算）
+            if self.chk_add_crlf.isChecked():
+                data += b"\r\n"
             self._apply_checksum(data)
         except Exception:
             self.lbl_cs_result.setText("")
@@ -2334,9 +2443,10 @@ class SerialTool(QWidget):
         self._record_send_history(raw)
         try:
             data = self._encode_send_text(raw)
-            data, cs_bytes = self._apply_checksum(data)
+            # 先加回车换行，再算校验码（CRLF 参与校验计算，作为帧的一部分）
             if self.chk_add_crlf.isChecked():
                 data += b"\r\n"
+            data, cs_bytes = self._apply_checksum(data)
             self.ser.write(data)
             self.tx_bytes += len(data)
             self._echo_send(raw, data, cs_bytes)
@@ -2347,19 +2457,9 @@ class SerialTool(QWidget):
             QMessageBox.critical(self, "发送失败", str(e))
 
     def _echo_send(self, raw: str, data: bytes, cs_bytes: bytes = b""):
-        """回显发送内容；附加的校验字节用中括号 [..] 标注。"""
-        if self.chk_send_hex.isChecked() or self.chk_show_hex.isChecked():
-            if cs_bytes:
-                body = data[:len(data) - len(cs_bytes)]
-                echo = " ".join(f"{b:02X}" for b in body)
-                echo += " [" + " ".join(f"{b:02X}" for b in cs_bytes) + "]"
-            else:
-                echo = " ".join(f"{b:02X}" for b in data)
-        else:
-            echo = raw
-            if cs_bytes:
-                echo += " [" + " ".join(f"{b:02X}" for b in cs_bytes) + "]"
-        self._add_record("tx", echo)
+        """回显发送内容；存结构化记录（原文 + 发送字节 + 校验字节 + 是否 HEX 输入），
+        渲染时按当前 HEX 开关格式化（HEX 发送且 HEX 显示关 → 解码为文本）。"""
+        self._add_tx_record(raw, data, cs_bytes, self.chk_send_hex.isChecked())
 
     def _record_send_history(self, raw: str):
         if not raw:
@@ -2442,23 +2542,13 @@ class SerialTool(QWidget):
                 data = bytes.fromhex(hex_str)
             else:
                 data = raw.encode("utf-8", errors="replace")
-            data, cs_bytes = self._apply_checksum(data)
+            # 先加回车换行，再算校验码（CRLF 参与校验计算，作为帧的一部分）
             if self.chk_add_crlf.isChecked():
                 data += b"\r\n"
+            data, cs_bytes = self._apply_checksum(data)
             self.ser.write(data)
             self.tx_bytes += len(data)
-            if e["hex"] or self.chk_show_hex.isChecked():
-                if cs_bytes:
-                    body = data[:len(data) - len(cs_bytes)]
-                    echo = " ".join(f"{b:02X}" for b in body)
-                    echo += " [" + " ".join(f"{b:02X}" for b in cs_bytes) + "]"
-                else:
-                    echo = " ".join(f"{b:02X}" for b in data)
-            else:
-                echo = raw
-                if cs_bytes:
-                    echo += " [" + " ".join(f"{b:02X}" for b in cs_bytes) + "]"
-            self._add_record("tx", echo)
+            self._add_tx_record(raw, data, cs_bytes, bool(e["hex"]))
             self._record_send_history(raw)
         except ValueError as ex:
             QMessageBox.critical(self, "HEX错误", str(ex))
@@ -2529,9 +2619,10 @@ class SerialTool(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "读取失败", str(e))
             return
-        data, _cs = self._apply_checksum(data)
+        # 先加回车换行（文本文件），再算校验码（CRLF 参与校验计算，作为帧的一部分）
         if self.chk_add_crlf.isChecked() and not path.lower().endswith((".bin", ".hex")):
             data += b"\r\n"
+        data, _cs = self._apply_checksum(data)
         self._file_data = data
         self._file_offset = 0
         self._file_sending = True
