@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QComboBox, QPushButton, QCheckBox, QLineEdit, QTextEdit,
     QTabWidget, QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
     QMessageBox, QDialog, QFormLayout, QSpinBox, QScrollArea, QFrame,
-    QProgressDialog,
+    QProgressBar, QProgressDialog,
     QSizePolicy, QGroupBox, QGridLayout, QStyledItemDelegate, QMenu,
     QToolButton, QGraphicsDropShadowEffect, QStyle, QStyleOptionButton,
     QStyleOptionFocusRect, QStyleOptionComboBox,
@@ -1180,6 +1180,25 @@ class SerialTool(QWidget):
         sb_lay.setSpacing(8)
         self.lbl_status = QLabel("未连接")
         sb_lay.addWidget(self.lbl_status, 1)
+        # 下载进度（下载时显示，下载完成/隐藏）
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(220)
+        self.progress_bar.setMaximumHeight(14)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.hide()
+        sb_lay.addWidget(self.progress_bar)
+        self.btn_cancel_dl = QToolButton()
+        self.btn_cancel_dl.setText("✕")
+        self.btn_cancel_dl.setToolTip("取消下载")
+        self.btn_cancel_dl.setAutoRaise(True)
+        self.btn_cancel_dl.hide()
+        sb_lay.addWidget(self.btn_cancel_dl)
+        # 稍后重启（用户选"稍后"后显示）
+        self.btn_restart = QToolButton()
+        self.btn_restart.setText("立即重启")
+        self.btn_restart.setToolTip("用下载好的新版替换当前程序并重启")
+        self.btn_restart.hide()
+        sb_lay.addWidget(self.btn_restart)
         self.lbl_sr = QLabel("S:0  R:0")
         sb_lay.addWidget(self.lbl_sr)
         self.lbl_handshake = QLabel("CTS=0 DSR=0 RLSD=0")
@@ -1304,7 +1323,8 @@ class SerialTool(QWidget):
 
     # ================= 自动下载更新 =================
     def _start_update_download(self, info: dict):
-        """点击"立即更新"：有 exe 附件 → 下载并自动替换重启；否则打开 release 页。"""
+        """点击"立即更新"：有 exe 附件 → 后台下载到当前目录 + 状态栏进度条；
+        下载完成后弹窗询问（用户可取消重启，状态栏显示"立即重启"按钮稍后触发）。"""
         exe_url = info.get("exe_url", "")
         if not exe_url:
             webbrowser.open(info["html_url"] or f"https://github.com/{GITHUB_REPO}/releases")
@@ -1319,63 +1339,109 @@ class SerialTool(QWidget):
             return
         ret = QMessageBox.question(
             self, "自动更新",
-            "将下载最新版并自动替换当前程序（下载完成后自动重启）。\n是否继续？")
+            f"将下载最新版 v{info['latest']} 并自动替换当前程序（下载完成后可选择是否立即重启）。\n是否继续？")
         if ret != QMessageBox.Yes:
             return
         if getattr(self, "_download_thread", None) is not None and \
                 self._download_thread.isRunning():
             return
         self.lbl_status.setText("正在下载更新...")
-        # 进度对话框（带取消）：线程发 progress(done, total) 更新
-        dlg = QProgressDialog("正在下载更新...", "取消", 0, 100, self)
-        dlg.setWindowTitle("自动更新")
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setAutoClose(False)
-        dlg.setAutoReset(False)
-        dlg.setMinimumDuration(0)
-        dlg.setValue(0)
-        dlg.show()
-        self._update_progress_dlg = dlg
+        # 状态栏底部进度条 + 取消按钮（下载时显示，"立即重启"按钮隐藏）
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%v%")
+        self.progress_bar.show()
+        self.btn_cancel_dl.show()
+        self.btn_restart.hide()
+        # 保存版本号（"立即重启"按钮显示用）
+        self._pending_update_version = info["latest"]
+        # 保存 info 供回调使用（包含 html_url）
+        self._pending_update_info = info
         self._download_thread = ExeDownloader(exe_url)
-        self._download_thread.progress.connect(
-            lambda done, total: self._on_download_progress(done, total, dlg))
+        self._download_thread.progress.connect(self._on_download_progress)
         self._download_thread.finished_ok.connect(self._on_update_downloaded)
         self._download_thread.failed.connect(self._on_update_download_failed)
-        dlg.canceled.connect(self._download_thread.cancel)
+        # 取消按钮连接（每次重新连接前断开旧的，避免重复连接导致 cancel 被调多次）
+        try:
+            self.btn_cancel_dl.clicked.disconnect()
+        except (TypeError, RuntimeError):
+            pass
+        self.btn_cancel_dl.clicked.connect(self._download_thread.cancel)
         self._download_thread.start()
 
-    def _on_download_progress(self, done: int, total: int, dlg):
-        """更新进度对话框：知道总大小 → 百分比 + 字节；未知 → 忙动画。"""
+    def _on_download_progress(self, done: int, total: int):
+        """更新底部进度条 + 状态栏文字（不弹窗）。"""
         if total > 0:
-            dlg.setMaximum(100)
-            dlg.setValue(min(100, int(done * 100 / total)))
-            dlg.setLabelText(
-                f"正在下载更新... {done // 1024} KB / {total // 1024} KB")
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(min(100, int(done * 100 / total)))
+            self.progress_bar.setFormat(
+                f"%v%  ({done // 1024}/{total // 1024} KB)")
         else:
-            dlg.setMaximum(0)      # busy 模式
-            dlg.setValue(0)
-            dlg.setLabelText(f"正在下载更新... {done // 1024} KB")
+            self.progress_bar.setMaximum(0)      # busy 模式
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat(f"已下载 {done // 1024} KB")
+        self.lbl_status.setText("正在下载更新...")
 
-    def _close_update_progress(self):
-        """关闭进度对话框（下载完成/失败/取消后统一调用）。"""
-        dlg = getattr(self, "_update_progress_dlg", None)
-        if dlg is not None:
-            try:
-                dlg.close()
-            except Exception:
-                pass
-            self._update_progress_dlg = None
+    def _close_download_ui(self):
+        """隐藏底部进度条 + 取消按钮（下载完成/失败/取消后统一调用）。"""
+        self.progress_bar.hide()
+        self.btn_cancel_dl.hide()
+        # 断开取消按钮与上一线程的连接（避免下次点击触发已死线程的 cancel）
+        try:
+            self.btn_cancel_dl.clicked.disconnect()
+        except (TypeError, RuntimeError):
+            pass
 
     def _on_update_downloaded(self, tmp: str):
-        """下载完成：生成替换批处理（等本进程退出后替换 exe 并重启），然后退出程序。"""
-        self._close_update_progress()
+        """下载完成：隐藏进度条 + 弹窗询问（立即重启 / 稍后）+ 底部"立即重启"按钮。"""
+        self._close_download_ui()
         self._refresh_status()
+        self._update_tmp = tmp
+        # 保存按钮回调
+        self.btn_restart.clicked.disconnect() if self.btn_restart.receivers(
+            self.btn_restart.clicked) else None
+        self.btn_restart.clicked.connect(self._perform_update_restart)
+        # 弹窗询问：立即重启 / 稍后
+        box = QMessageBox(self)
+        box.setWindowTitle("更新下载完成")
+        box.setIcon(QMessageBox.Information)
+        box.setText(f"新版本 v{self._pending_update_version} 已下载完成。\n"
+                    f"是否立即重启以完成更新？")
+        btn_now = box.addButton("立即重启", QMessageBox.AcceptRole)
+        btn_later = box.addButton("稍后", QMessageBox.RejectRole)
+        box.setDefaultButton(btn_now)
+        box.exec()
+        if box.clickedButton() is btn_now:
+            self._perform_update_restart()
+        else:
+            # 状态栏显示"立即重启 v..."按钮，用户可稍后手动触发
+            self.btn_restart.setText(f"立即重启 v{self._pending_update_version}")
+            self.btn_restart.show()
+
+    def _on_update_download_failed(self, err: str):
+        self._close_download_ui()
+        self._refresh_status()
+        QMessageBox.warning(
+            self, "更新下载失败",
+            f"下载更新失败：{err}\n请稍后重试或前往 GitHub 手动下载。")
+
+    def _perform_update_restart(self):
+        """执行替换重启：写 bat + 启动 cmd + 关闭当前程序。
+        供弹窗"立即重启"按钮和底部"立即重启 v..."按钮共用。"""
+        tmp = getattr(self, "_update_tmp", None)
+        if not tmp or not os.path.exists(tmp):
+            QMessageBox.critical(self, "更新失败",
+                                 f"下载文件已丢失：{tmp}\n请重新检查更新。")
+            self.btn_restart.hide()
+            return
         exe_dir = os.path.dirname(sys.executable)
         target = os.path.join(exe_dir, "SJJ-COM-Tool.exe")
         bat = os.path.join(exe_dir, "_sjj_update.bat")
         # 注意：if errorlevel 1 判断 find 未找到（进程已退出），避免括号内 %errorlevel% 延迟展开问题。
         # bat 用 UTF-8 with BOM 写入（encoding="utf-8-sig"），cmd 需用 chcp 65001 切到 UTF-8 代码页
         # 才能正确解析 bat + 含中文的 exe 路径（默认 GBK 代码页会乱码导致 move 找不到文件）。
+        # 启动新 exe 用 explorer.exe 而非 cmd start：explorer 进程拥有完整用户环境（PATH、
+        # SystemRoot 等），与手动双击一致。cmd start 子进程环境精简会导致 PyInstaller 解压
+        # 的 python311.dll 依赖（vcruntime140 等）找不到 → "Failed to load Python DLL"。
         script = (
             "@echo off\r\n"
             "chcp 65001 >nul\r\n"
@@ -1387,7 +1453,7 @@ class SerialTool(QWidget):
             "goto wait\r\n"
             ":replace\r\n"
             f'move /y "{tmp}" "{target}" >nul 2>&1\r\n'
-            f'start "" "{target}"\r\n'
+            f'explorer.exe "{target}"\r\n'
             "del \"%~f0\"\r\n"
         )
         try:
@@ -1402,16 +1468,11 @@ class SerialTool(QWidget):
                 f"无法启动更新程序：{e}\n"
                 f"新版本已下载到：{tmp}\n请手动替换 {target}")
             return
-        self.lbl_status.setText("更新下载完成，正在重启...")
+        # 隐藏按钮（已启动重启）
+        self.btn_restart.hide()
+        self.lbl_status.setText("更新完成，正在重启...")
         # 延迟退出，让状态栏提示可见；closeEvent 会保存配置
         QTimer.singleShot(800, self.close)
-
-    def _on_update_download_failed(self, err: str):
-        self._close_update_progress()
-        self._refresh_status()
-        QMessageBox.critical(
-            self, "更新失败",
-            f"下载更新失败：{err}\n请稍后重试或前往 GitHub 手动下载。")
 
     # ================= 历史记录 Tab =================
     def _build_history_tab(self):
