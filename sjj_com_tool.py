@@ -36,7 +36,7 @@ import serial.tools.list_ports
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QComboBox, QPushButton, QCheckBox, QLineEdit, QTextEdit, QSplitter,
+    QComboBox, QPushButton, QCheckBox, QLineEdit, QTextEdit,
     QTabWidget, QListWidget, QListWidgetItem, QFileDialog, QInputDialog,
     QMessageBox, QDialog, QFormLayout, QSpinBox, QScrollArea, QFrame,
     QSizePolicy, QGroupBox, QGridLayout, QStyledItemDelegate, QMenu,
@@ -440,11 +440,20 @@ class SerialTool(QWidget):
         main.setSpacing(4)
         outer.addWidget(content, 1)
 
-        # ===== 上半部分：接收区 + 右侧 历史/快捷命令 窗口（默认隐藏）=====
-        self.splitter = QSplitter(Qt.Horizontal)
-        main.addWidget(self.splitter, 1)
+        # ===== 上半部分：横向布局(接收区+命令面板) + 接收区按钮行 =====
+        # 用 QHBoxLayout 而非 QSplitter：命令面板固定 420 宽，不存在分隔条，
+        # 天然不可拖拽、不可折叠——彻底杜绝"拖拽把面板缩没"的问题。
+        # 面板显示时只压缩接收文字显示区（txt_recv），按钮行在下方始终全宽。
+        upper = QWidget()
+        upper_lay = QVBoxLayout(upper)
+        upper_lay.setContentsMargins(0, 0, 0, 0)
+        upper_lay.setSpacing(4)
 
-        # 左侧：接收区
+        upper_row = QHBoxLayout()
+        upper_row.setSpacing(4)
+        upper_lay.addLayout(upper_row, 1)
+
+        # 左侧：接收区（只放文字显示；按钮行放在本容器下面）
         recv_box = QGroupBox("")
         recv_box.setStyleSheet(
             "QGroupBox{background-color:#F2F2F6;border:1px solid rgba(130,158,180,60);"
@@ -462,7 +471,28 @@ class SerialTool(QWidget):
             "border:none;}")
         recv_lay.addWidget(self.txt_recv, 1)
 
-        # 接收区面板下方：清除窗口 那一排控件
+        upper_row.addWidget(recv_box, 1)
+
+        # 右侧：历史 / 快捷命令 窗口（默认隐藏，点按钮打开）
+        self.ms_tabs = QTabWidget()
+        # 命令面板固定为最小宽度 420，禁止左右拖拽改变大小
+        self.ms_tabs.setFixedWidth(420)
+        self.ms_tabs.setStyleSheet(
+            "QTabWidget::pane{background-color:#ECF5F9;border:1px solid rgba(130,158,180,110);"
+            "border-radius:6px;top:-1px;}"
+            "QTabBar::tab{background:transparent;padding:5px 12px;color:#3a4a5a;}"
+            "QTabBar::tab:selected{background:#ECF5F9;border:1px solid rgba(130,158,180,110);"
+            "border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
+            "QTabBar::tab:!selected{background:transparent;color:#6a7a8a;}"
+            "QTabBar::tab:hover:!selected{background:rgba(130,158,180,40);}")
+        self._build_history_tab()
+        self._build_ms_tab()
+        self.ms_tabs.hide()
+        upper_row.addWidget(self.ms_tabs)
+
+        # 接收区按钮行：清除窗口 / HEX显示 / 加时间戳 / 暂停刷新 / 编码 / 搜索 / 筛选 / 保存数据
+        # 放在 upper_row（接收区+命令面板）下面，宽度跟随 upper 容器（即上半部分的全宽），
+        # ms_tabs 打开/收起时不会被挤压。
         rt = QHBoxLayout()
         rt.setSpacing(4)
         btn = QPushButton("清除窗口"); btn.clicked.connect(self._clear_recv); rt.addWidget(btn)
@@ -486,27 +516,9 @@ class SerialTool(QWidget):
         rt.addWidget(self.chk_filter)
         btn = QPushButton("保存数据"); btn.clicked.connect(self._save_recv); rt.addWidget(btn)
         rt.addStretch(1)
-        recv_lay.addLayout(rt)
+        upper_lay.addLayout(rt)
 
-        self.splitter.addWidget(recv_box)
-        self.splitter.setStretchFactor(0, 3)
-
-        # 右侧：历史 / 快捷命令 窗口（默认隐藏，点按钮打开）
-        self.ms_tabs = QTabWidget()
-        self.ms_tabs.setMinimumWidth(420)
-        self.ms_tabs.setStyleSheet(
-            "QTabWidget::pane{background-color:#ECF5F9;border:1px solid rgba(130,158,180,110);"
-            "border-radius:6px;top:-1px;}"
-            "QTabBar::tab{background:transparent;padding:5px 12px;color:#3a4a5a;}"
-            "QTabBar::tab:selected{background:#ECF5F9;border:1px solid rgba(130,158,180,110);"
-            "border-bottom:none;border-top-left-radius:6px;border-top-right-radius:6px;}"
-            "QTabBar::tab:!selected{background:transparent;color:#6a7a8a;}"
-            "QTabBar::tab:hover:!selected{background:rgba(130,158,180,40);}")
-        self._build_history_tab()
-        self._build_ms_tab()
-        self.ms_tabs.hide()
-        self.splitter.addWidget(self.ms_tabs)
-        self.splitter.setStretchFactor(1, 0)
+        main.addWidget(upper, 1)
 
         # 滚动跟随：滚轮上翻/拖动滚动条上移 → 自动勾选暂停刷新；滚回底部自动取消
         self.txt_recv.verticalScrollBar().valueChanged.connect(self._on_recv_scroll)
