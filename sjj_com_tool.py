@@ -29,6 +29,7 @@ import struct
 import zlib
 import json
 import base64
+import threading
 import subprocess
 import webbrowser
 import urllib.request
@@ -345,47 +346,142 @@ class UpdateChecker(QThread):
 
 
 class ExeDownloader(QThread):
-    """后台下载最新版 exe（带流式写入，不阻塞 UI）。"""
+    """后台多线程下载最新版 exe（HTTP Range 分块，默认 5 线程，不阻塞 UI）。
+    服务器不支持 Range 时自动回退单线程。"""
     finished_ok = Signal(str)   # 临时文件路径
     failed = Signal(str)        # 错误信息
-    progress = Signal(int, int) # 已下载字节, 总字节(-1 未知)
+    progress = Signal(int, int, int) # 已下载字节, 总字节(-1 未知), 速度(KB/s,整数)
 
-    def __init__(self, url: str, timeout: float = 120.0):
+    DOWNLOAD_THREADS = 5        # 默认线程数（分块数）
+
+    def __init__(self, url: str, timeout: float = 120.0, threads: int = None):
         super().__init__()
         self.url = url
         self.timeout = timeout
+        self.threads = threads or self.DOWNLOAD_THREADS
         self._cancel = False
 
     def cancel(self):
-        """取消下载（线程内下个分块时退出并清理临时文件）。"""
+        """取消下载（所有分块线程下个分块时退出并清理临时文件）。"""
         self._cancel = True
+
+    # ---------- 工具 ----------
+    def _headers(self, extra=None):
+        h = {"User-Agent": f"SJJ-COM-Tool/{APP_VERSION}"}
+        if extra:
+            h.update(extra)
+        return h
+
+    def _check_range_support(self) -> int:
+        """探测服务器是否支持 Range；支持返回 Content-Length，否则 -1。"""
+        try:
+            req = urllib.request.Request(
+                self.url, headers=self._headers({"Range": "bytes=0-0"}))
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                if resp.status != 206:
+                    return -1
+                # 从 Content-Range: bytes 0-0/123456 取总大小
+                cr = resp.headers.get("Content-Range", "")
+                if "/" in cr:
+                    return int(cr.rsplit("/", 1)[1])
+        except Exception:
+            return -1
+        return -1
+
+    # ---------- 单线程（Range 不支持 / threads<=1 回退）----------
+    def _download_single(self, tmp: str, total: int):
+        req = urllib.request.Request(self.url, headers=self._headers())
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            done = 0
+            start = time.time()
+            with open(tmp, "wb") as f:
+                while True:
+                    if self._cancel:
+                        raise OSError("下载已取消")
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    elapsed = max(0.001, time.time() - start)
+                    self.progress.emit(done, total,
+                                       max(0, int(done / elapsed / 1024)))
+
+    # ---------- 多线程 Range 分块 ----------
+    def _download_multi(self, tmp: str, total: int):
+        n = max(1, min(self.threads, total // (256 * 1024) + 1))
+        chunk = total // n
+        ranges = []
+        for i in range(n):
+            start = i * chunk
+            end = (total - 1) if i == n - 1 else (i + 1) * chunk - 1
+            ranges.append((start, end))
+        # 预分配文件（r+b 按偏移写入）
+        with open(tmp, "wb") as f:
+            f.truncate(total)
+        done = [0] * n                 # 每线程已下载字节
+        errors = []
+        lock = threading.Lock()
+        start = time.time()
+
+        def worker(i, start_b, end_b):
+            try:
+                req = urllib.request.Request(
+                    self.url,
+                    headers=self._headers({"Range": f"bytes={start_b}-{end_b}"}))
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    with open(tmp, "r+b") as f:
+                        f.seek(start_b)
+                        pos = start_b
+                        while True:
+                            if self._cancel:
+                                raise OSError("下载已取消")
+                            buf = resp.read(256 * 1024)
+                            if not buf:
+                                break
+                            f.write(buf)
+                            pos += len(buf)
+                            with lock:
+                                done[i] = pos - start_b
+            except Exception as e:
+                with lock:
+                    errors.append(str(e))
+
+        threads = [threading.Thread(target=worker, args=(i, s, e),
+                                    daemon=True)
+                   for i, (s, e) in enumerate(ranges)]
+        for t in threads:
+            t.start()
+        # 主线程汇总进度（QThread 线程内 emit → 主 UI 线程 QueuedConnection）
+        while any(t.is_alive() for t in threads):
+            time.sleep(0.05)
+            with lock:
+                total_done = sum(done)
+            elapsed = max(0.001, time.time() - start)
+            self.progress.emit(total_done, total,
+                               max(0, int(total_done / elapsed / 1024)))
+            if self._cancel:
+                break
+        for t in threads:
+            t.join(0.1)
+        if errors and not self._cancel:
+            raise OSError(errors[0])
+        if self._cancel:
+            raise OSError("下载已取消")
+        with lock:
+            self.progress.emit(sum(done), total, 0)
 
     def run(self):
         tmp = None
         try:
-            req = urllib.request.Request(
-                self.url,
-                headers={"User-Agent": f"SJJ-COM-Tool/{APP_VERSION}"})
             tmp = os.path.join(os.path.dirname(sys.executable),
                                "SJJ-COM-Tool.update.exe")
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                # GitHub 资产下载响应头通常带 Content-Length
-                total = -1
-                try:
-                    total = int(resp.headers.get("Content-Length", -1))
-                except (TypeError, ValueError):
-                    total = -1
-                done = 0
-                with open(tmp, "wb") as f:
-                    while True:
-                        if self._cancel:
-                            raise OSError("下载已取消")
-                        chunk = resp.read(256 * 1024)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        done += len(chunk)
-                        self.progress.emit(done, total)
+            total = self._check_range_support()
+            if total > 0 and self.threads > 1 and total > 2 * 1024 * 1024:
+                # 服务器支持 Range 且文件 > 2MB 才多线程（小文件单线程更快）
+                self._download_multi(tmp, total)
+            else:
+                self._download_single(tmp, total)
             if os.path.getsize(tmp) == 0:
                 raise OSError("下载文件为空")
             self.finished_ok.emit(tmp)
@@ -1179,14 +1275,24 @@ class SerialTool(QWidget):
         sb_lay.setContentsMargins(6, 1, 6, 1)
         sb_lay.setSpacing(8)
         self.lbl_status = QLabel("未连接")
-        sb_lay.addWidget(self.lbl_status, 1)
-        # 下载进度（下载时显示，下载完成/隐藏）
+        sb_lay.addWidget(self.lbl_status, 1)   # 左侧文字占满弹性空间
+        # 下载进度容器（进度条 + 速度标签，下载时 stretch=1 占据中间不影响前后串口信息）
+        self.progress_container = QWidget()
+        pc_lay = QHBoxLayout(self.progress_container)
+        pc_lay.setContentsMargins(0, 0, 0, 0)
+        pc_lay.setSpacing(6)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumWidth(220)
-        self.progress_bar.setMaximumHeight(14)
+        self.progress_bar.setFixedWidth(220)
+        self.progress_bar.setFixedHeight(16)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.hide()
-        sb_lay.addWidget(self.progress_bar)
+        self.progress_bar.setFormat("%v%")
+        pc_lay.addWidget(self.progress_bar)
+        self.lbl_speed = QLabel("")
+        self.lbl_speed.setMinimumWidth(70)         # 预留宽度防止抖动
+        self.lbl_speed.setStyleSheet("color:transparent;")
+        pc_lay.addWidget(self.lbl_speed)
+        self.progress_container.hide()
+        sb_lay.addWidget(self.progress_container, 0)  # 默认 stretch=0
         self.btn_cancel_dl = QToolButton()
         self.btn_cancel_dl.setText("✕")
         self.btn_cancel_dl.setToolTip("取消下载")
@@ -1209,6 +1315,7 @@ class SerialTool(QWidget):
         self.lbl_app.setCursor(Qt.PointingHandCursor)
         sb_lay.addWidget(self.lbl_app)
         outer.addWidget(self.status_bar)   # 窗口底部（与窗口同宽）
+        self._sb_lay = sb_lay              # 保存供 _close_download_ui 调整 stretch
 
         # 定时发送
         self.timer_send = QTimer(self)
@@ -1327,19 +1434,13 @@ class SerialTool(QWidget):
     # ================= 自动下载更新 =================
     def _start_update_download(self, info: dict):
         """点击"立即更新"：有 exe 附件 → 后台下载到当前目录 + 状态栏进度条；
-        下载完成后弹窗询问（用户可取消重启，状态栏显示"立即重启"按钮稍后触发）。"""
+        下载完成后弹窗询问（用户可取消重启，状态栏显示"立即重启"按钮稍后触发）。
+        源码模式也允许下载（方便测试下载功能），完成时提示文件位置而非自动替换。"""
         exe_url = info.get("exe_url", "")
         if not exe_url:
             webbrowser.open(info["html_url"] or f"https://github.com/{GITHUB_REPO}/releases")
             return
-        if not getattr(sys, "frozen", False):
-            # 源码运行：没有可替换的 exe，引导打开下载页
-            QMessageBox.information(
-                self, "自动更新",
-                "当前为源码运行，无法自动替换程序。\n"
-                "将打开 GitHub 下载页，请手动下载最新 exe。")
-            webbrowser.open(info["html_url"] or f"https://github.com/{GITHUB_REPO}/releases")
-            return
+        # 源码模式允许下载（不再拦截），下载完成后的处理在 _on_update_downloaded 区分
         ret = QMessageBox.question(
             self, "自动更新",
             f"将下载最新版 v{info['latest']} 并自动替换当前程序（下载完成后可选择是否立即重启）。\n是否继续？")
@@ -1348,11 +1449,18 @@ class SerialTool(QWidget):
         if getattr(self, "_download_thread", None) is not None and \
                 self._download_thread.isRunning():
             return
-        self.lbl_status.setText("正在下载更新...")
         # 状态栏底部进度条 + 取消按钮（下载时显示，"立即重启"按钮隐藏）
+        # 下载时：lbl_status 保留串口信息（不修改文字），只把进度条容器 stretch=1
+        # 放到中间；lbl_status stretch=0 按 sizeHint 占左侧，串口信息（右侧）不受影响
+        idx_lbl = self._sb_lay.indexOf(self.lbl_status)
+        self._sb_lay.setStretch(idx_lbl, 0)
+        idx_pc = self._sb_lay.indexOf(self.progress_container)
+        self._sb_lay.setStretch(idx_pc, 1)
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("%v%")
-        self.progress_bar.show()
+        self.lbl_speed.setText("")
+        self.lbl_speed.setStyleSheet("color:transparent;")
+        self.progress_container.show()
         self.btn_cancel_dl.show()
         self.btn_restart.hide()
         # 保存版本号（"立即重启"按钮显示用）
@@ -1371,8 +1479,8 @@ class SerialTool(QWidget):
         self.btn_cancel_dl.clicked.connect(self._download_thread.cancel)
         self._download_thread.start()
 
-    def _on_download_progress(self, done: int, total: int):
-        """更新底部进度条 + 状态栏文字（不弹窗）。"""
+    def _on_download_progress(self, done: int, total: int, speed_kbps: int):
+        """更新底部进度条 + 速度（不弹窗）。"""
         if total > 0:
             self.progress_bar.setMaximum(100)
             self.progress_bar.setValue(min(100, int(done * 100 / total)))
@@ -1382,26 +1490,60 @@ class SerialTool(QWidget):
             self.progress_bar.setMaximum(0)      # busy 模式
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat(f"已下载 {done // 1024} KB")
-        self.lbl_status.setText("正在下载更新...")
+        # 下载速度（主题文字色）
+        if speed_kbps > 0:
+            self.lbl_speed.setText(f"{speed_kbps} KB/s")
+            self.lbl_speed.setStyleSheet(f"color:{self._theme_text_color()};")
 
     def _close_download_ui(self):
         """隐藏底部进度条 + 取消按钮（下载完成/失败/取消后统一调用）。"""
-        self.progress_bar.hide()
+        self.progress_container.hide()
         self.btn_cancel_dl.hide()
+        self.lbl_speed.setText("")
+        self.lbl_speed.setStyleSheet("color:transparent;")
+        # 恢复 stretch：lbl_status 重占左侧，progress_container 回到 stretch=0
+        sb_lay = getattr(self, "_sb_lay", None)
+        if sb_lay is not None:
+            idx_lbl = sb_lay.indexOf(self.lbl_status)
+            idx_pc = sb_lay.indexOf(self.progress_container)
+            sb_lay.setStretch(idx_lbl, 1)
+            sb_lay.setStretch(idx_pc, 0)
         # 断开取消按钮与上一线程的连接（避免下次点击触发已死线程的 cancel）
         try:
             self.btn_cancel_dl.clicked.disconnect()
         except (TypeError, RuntimeError):
             pass
 
+    def _theme_text_color(self) -> str:
+        """当前主题的 text_primary 色（用于状态栏内嵌文字如速度）。"""
+        if self._theme == "dark":
+            return "#CDD6F4"
+        return "#4C4F69"
+
     def _on_update_downloaded(self, tmp: str):
-        """下载完成：隐藏进度条 + 弹窗询问（立即重启 / 稍后）+ 底部"立即重启"按钮。"""
+        """下载完成：隐藏进度条 + 弹窗询问（立即重启 / 稍后）+ 底部"立即重启"按钮。
+        源码模式：无 exe 可替换，仅提示文件位置并打开所在文件夹（方便测试下载功能）。"""
         self._close_download_ui()
         self._refresh_status()
         self._update_tmp = tmp
-        # 保存按钮回调
-        self.btn_restart.clicked.disconnect() if self.btn_restart.receivers(
-            self.btn_restart.clicked) else None
+        if not getattr(sys, "frozen", False):
+            # 源码运行：下载完成提示 + 打开所在文件夹（无自动替换）
+            self.btn_restart.hide()
+            QMessageBox.information(
+                self, "更新下载完成",
+                f"新版本 v{self._pending_update_version} 已下载完成：\n{tmp}\n\n"
+                f"当前为源码运行，无法自动替换 exe，已为你打开所在文件夹。")
+            try:
+                # 在资源管理器中选中下载的文件
+                subprocess.Popen(["explorer", "/select,", tmp])
+            except Exception:
+                pass
+            return
+        # 保存按钮回调（先断开旧的避免重复连接）
+        try:
+            self.btn_restart.clicked.disconnect()
+        except (TypeError, RuntimeError):
+            pass
         self.btn_restart.clicked.connect(self._perform_update_restart)
         # 弹窗询问：立即重启 / 稍后
         box = QMessageBox(self)
