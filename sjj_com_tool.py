@@ -1284,11 +1284,13 @@ class SerialTool(QWidget):
             return
         latest = info["latest"]
         manual = getattr(self._update_checker, "_manual", False)
+        # 显示用版本号：剥掉前导 v，避免"vv1.0.3"（烧录的 APP_VERSION 可能带 v 前缀）
+        _ver = APP_VERSION.lstrip("vV")
         if not _is_newer(latest, APP_VERSION):
             if manual:
-                self.lbl_status.setText(f"已是最新版本 v{APP_VERSION}")
+                self.lbl_status.setText(f"已是最新版本 v{_ver}")
                 QMessageBox.information(self, "检查更新",
-                                        f"当前已是最新版本 v{APP_VERSION}。")
+                                        f"当前已是最新版本 v{_ver}。")
                 self._refresh_status()
             return
         # 自动检查：被忽略过的版本不再提示
@@ -1300,10 +1302,11 @@ class SerialTool(QWidget):
     def _show_update_dialog(self, info: dict):
         """更新弹窗：立即更新 / 下次再说 / 忽略本次更新。"""
         latest = info["latest"]
+        _ver = APP_VERSION.lstrip("vV")
         box = QMessageBox(self)
         box.setWindowTitle("发现新版本")
         box.setIcon(QMessageBox.Information)
-        box.setText(f"发现新版本 v{latest}\n当前版本 v{APP_VERSION}")
+        box.setText(f"发现新版本 v{latest}\n当前版本 v{_ver}")
         if info.get("body"):
             body = info["body"].strip().splitlines()
             brief = "\n".join(body[:6])
