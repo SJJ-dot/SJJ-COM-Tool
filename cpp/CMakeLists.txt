@@ -12,6 +12,21 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+# ===== 体积优化（替代已废弃的 UPX 加壳） =====
+# UPX 加壳会触发 Microsoft Defender 误报(Wacatac/PUA)，已移除。
+# 改用编译期优化压缩体积，安全无副作用、不影响杀软判定：
+#   -Os                优化尺寸（代码更小）
+#   -ffunction-sections/-fdata-sections + --gc-sections
+#                      把每个函数/数据放独立 section，链接时剔除未用部分
+#                      （对静态 Qt 收益最大：只链接真正用到的 Qt 代码）
+#   -flto              链接期优化，跨编译单元消除冗余
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(CMAKE_CXX_FLAGS_RELEASE
+        "${CMAKE_CXX_FLAGS_RELEASE} -Os -ffunction-sections -fdata-sections -flto")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE
+        "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -Wl,--gc-sections -flto")
+endif()
+
 # MSVC 使用 UTF-8 源码字符集（源码含中文注释/字符串）
 if(MSVC)
     add_compile_options(/utf-8)
