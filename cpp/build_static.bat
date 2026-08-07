@@ -67,6 +67,10 @@ set "QT_SERIAL=%QT_STATIC_PREFIX%\lib\libQt6SerialPort.a"
 
 if exist "%QT_CORE%" if exist "%QT_CORE5%" if exist "%QT_SERIAL%" (
     echo   [SKIP] Static Qt already installed: %QT_STATIC_PREFIX%
+    if "%QT_ONLY%"=="1" (
+        echo   [QT_ONLY] Static Qt libs already present; app build skipped.
+        exit /b 0
+    )
     goto build_app
 )
 
@@ -181,6 +185,16 @@ if not exist "%QT_SERIAL%" (
     )
     popd
     echo   [OK] qtserialport installed
+)
+
+REM ---------- QT_ONLY mode ----------
+REM When QT_ONLY=1, stop here (static Qt libs built, app build skipped).
+REM Used by CI to cache the Qt static libs in a dedicated job so a later
+REM app-build failure does not force a full Qt rebuild next time.
+if "%QT_ONLY%"=="1" (
+    echo.
+    echo [QT_ONLY] Static Qt libs ready; app build skipped.
+    exit /b 0
 )
 
 REM ---------- [6/6] build app ----------

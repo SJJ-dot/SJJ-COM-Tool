@@ -13,12 +13,69 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build static single-file exe
+  # ============ job 1: 编译静态 Qt 库（成功后缓存） ============
+  # actions/cache 只在 job 成功时保存。把 Qt 编译拆成独立 job，
+  # 即使后续应用编译失败，Qt 缓存也已被保存，下次不再全量重编。
+  build-qt-static:
+    name: Build static Qt libs (cached)
     runs-on: windows-latest
     timeout-minutes: 90
     env:
-      # 与 build_static.bat 的环境变量一一对应（覆盖默认的 D:\dev 路径）
+      W64DEVKIT: ${{ github.workspace }}\w64devkit
+      QT_SRC: ${{ github.workspace }}\qt-src
+      QT_STATIC_PREFIX: ${{ github.workspace }}\qt-static
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download w64devkit (MinGW gcc 13)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/skeeto/w64devkit/releases/download/v1.23.0/w64devkit-1.23.0.zip" -OutFile w64devkit.zip
+          Expand-Archive w64devkit.zip -DestinationPath "$env:GITHUB_WORKSPACE" -Force
+          & "$env:GITHUB_WORKSPACE\w64devkit\bin\gcc.exe" --version | Select-Object -First 1
+
+      # w64devkit v1.23.0 不包含 ninja，单独下载放入其 bin
+      - name: Download ninja (for w64devkit v1.23.0)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile ninja.zip
+          Expand-Archive ninja.zip -DestinationPath "$env:GITHUB_WORKSPACE\ninja" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\ninja\ninja.exe" "$env:GITHUB_WORKSPACE\w64devkit\bin\ninja.exe" -Force
+
+      - name: Cache Qt sources
+        id: cache-qt-src
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}\qt-src\qtbase
+            ${{ github.workspace }}\qt-src\qt5compat
+            ${{ github.workspace }}\qt-src\qtserialport
+          key: qt-src-6.8.2-${{ runner.os }}
+
+      # 编译好的静态 Qt 库缓存：本 job 成功即保存，后续 job 命中则跳过全量编译
+      - name: Cache static Qt libs
+        id: cache-qt-static
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\qt-static
+          key: qt-static-6.8.2-${{ runner.os }}-v1
+
+      # QT_ONLY=1：只编译静态 Qt 库（qtbase/qt5compat/qtserialport），不编译应用
+      - name: Build static Qt libs only (QT_ONLY=1)
+        shell: cmd
+        run: |
+          set QT_ONLY=1
+          call cpp\build_static.bat
+
+  # ============ job 2: 恢复缓存 → 编译应用 → strip/UPX → 发布 ============
+  build-app:
+    name: Build & release app
+    needs: build-qt-static
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
       W64DEVKIT: ${{ github.workspace }}\w64devkit
       QT_SRC: ${{ github.workspace }}\qt-src
       QT_STATIC_PREFIX: ${{ github.workspace }}\qt-static
@@ -33,18 +90,13 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://github.com/skeeto/w64devkit/releases/download/v1.23.0/w64devkit-1.23.0.zip" -OutFile w64devkit.zip
           Expand-Archive w64devkit.zip -DestinationPath "$env:GITHUB_WORKSPACE" -Force
-          Get-ChildItem "$env:GITHUB_WORKSPACE\w64devkit\bin\gcc.exe" | Select-Object FullName
-          & "$env:GITHUB_WORKSPACE\w64devkit\bin\gcc.exe" --version | Select-Object -First 1
 
-      # w64devkit v1.23.0 不包含 ninja，单独下载放入其 bin（build_static.bat 会优先用它，
-      # 找不到再退回 PATH 中的 ninja）
       - name: Download ninja (for w64devkit v1.23.0)
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile ninja.zip
           Expand-Archive ninja.zip -DestinationPath "$env:GITHUB_WORKSPACE\ninja" -Force
           Copy-Item "$env:GITHUB_WORKSPACE\ninja\ninja.exe" "$env:GITHUB_WORKSPACE\w64devkit\bin\ninja.exe" -Force
-          & "$env:GITHUB_WORKSPACE\w64devkit\bin\ninja.exe" --version
 
       - name: Download UPX packer
         shell: pwsh
@@ -53,9 +105,8 @@ jobs:
           Expand-Archive upx.zip -DestinationPath "$env:GITHUB_WORKSPACE\upx" -Force
           $exe = Get-ChildItem "$env:GITHUB_WORKSPACE\upx" -Recurse -Filter upx.exe | Select-Object -First 1
           Copy-Item $exe.FullName "$env:GITHUB_WORKSPACE\upx\upx.exe" -Force
-          & "$env:GITHUB_WORKSPACE\upx\upx.exe" --version | Select-Object -First 1
 
-      # Qt 源码缓存在 runner 间共享，二次构建（新 tag）可跳过 git clone
+      # 恢复 job1 保存的缓存（Qt 已编译则跳过，秒过）
       - name: Cache Qt sources
         id: cache-qt-src
         uses: actions/cache@v4
@@ -66,7 +117,6 @@ jobs:
             ${{ github.workspace }}\qt-src\qtserialport
           key: qt-src-6.8.2-${{ runner.os }}
 
-      # 编译好的静态 Qt 库缓存（首次全量编译约 30min，后续 tag 命中缓存秒过）
       - name: Cache static Qt libs
         id: cache-qt-static
         uses: actions/cache@v4
@@ -74,6 +124,7 @@ jobs:
           path: ${{ github.workspace }}\qt-static
           key: qt-static-6.8.2-${{ runner.os }}-v1
 
+      # Qt 缓存命中时 build_static.bat 自动跳过 [3/6]-[5/6]，直接编译应用
       - name: Build static exe (build_static.bat)
         shell: cmd
         run: |
