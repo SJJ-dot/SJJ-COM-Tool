@@ -17,6 +17,8 @@ REM                       (default: D:\dev\toolchains\w64devkit)
 REM    QT_SRC             Qt source dir (default: D:\dev\qt-src)
 REM    QT_STATIC_PREFIX   Qt static install dir
 REM                       (default: D:\dev\qt-static-6.8.2)
+REM    UPX_TOOL           UPX packer exe path (optional, enables size shrink)
+REM                       (default: D:\dev\toolchains\upx\upx-4.2.4-win64\upx.exe)
 REM ============================================================
 
 set "QT_VERSION=6.8.2"
@@ -192,11 +194,29 @@ REM ---------- output ----------
 if not exist "%APP_DIR%dist_static" mkdir "%APP_DIR%dist_static"
 copy /y "%APP_DIR%build_static\SJJ-COM-Tool.exe" "%APP_DIR%dist_static\SJJ-COM-Tool.exe" >nul
 
+REM ---------- [7/7] shrink: strip symbols + UPX pack ----------
+echo.
+echo [7/7] Shrinking exe (strip + UPX)...
+"%TOOLCHAIN_BIN%\strip.exe" -s "%APP_DIR%dist_static\SJJ-COM-Tool.exe"
+if errorlevel 1 echo   [WARN] strip failed, skipping (exe stays unstripped)
+
+if "%UPX_TOOL%"=="" set "UPX_TOOL=D:\dev\toolchains\upx\upx-4.2.4-win64\upx.exe"
+if not exist "%UPX_TOOL%" set "UPX_TOOL=D:\dev\toolchains\upx\upx.exe"
+if not exist "%UPX_TOOL%" (
+    echo   [SKIP] UPX not found: %UPX_TOOL%
+    echo   Download https://github.com/upx/upx/releases and set UPX_TOOL env var,
+    echo   or place upx.exe at D:\dev\toolchains\upx\upx.exe to enable packing
+) else (
+    "%UPX_TOOL%" --best -q "%APP_DIR%dist_static\SJJ-COM-Tool.exe"
+    if errorlevel 1 echo   [WARN] UPX failed, exe stays uncompressed
+)
+
 echo.
 echo ============================================================
 echo  BUILD OK!
 echo  Single-file exe: %APP_DIR%dist_static\SJJ-COM-Tool.exe
-echo  (~48MB, zero-dependency, runs on any 64-bit Win10/11)
+for %%A in ("%APP_DIR%dist_static\SJJ-COM-Tool.exe") do echo  Size: %%~zA bytes
+echo  (zero-dependency, runs on any 64-bit Win10/11)
 echo ============================================================
 endlocal
 exit /b 0
