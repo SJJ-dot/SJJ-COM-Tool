@@ -202,7 +202,7 @@ echo [6/6] Building app (static)...
 if "%APP_VERSION%"=="" set "APP_VERSION=dev"
 echo   [INFO] APP_VERSION=%APP_VERSION%
 pushd "%APP_DIR%"
-cmake -S . -B build_static -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_C_COMPILER="%TOOLCHAIN_BIN%\gcc.exe" -DCMAKE_CXX_COMPILER="%TOOLCHAIN_BIN%\g++.exe" -DCMAKE_MAKE_PROGRAM="%NINJA%" -DAPP_VERSION="%APP_VERSION%"
+cmake -S . -B build_static -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_CXX_COMPILER="%TOOLCHAIN_BIN%\g++.exe" -DCMAKE_MAKE_PROGRAM="%NINJA%" -DAPP_VERSION="%APP_VERSION%"
 if errorlevel 1 (
     popd
     echo   [ERROR] app configure failed; try deleting cpp\build_static and rerun

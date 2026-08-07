@@ -19,12 +19,12 @@ set(CMAKE_AUTOUIC ON)
 #   -ffunction-sections/-fdata-sections + --gc-sections
 #                      把每个函数/数据放独立 section，链接时剔除未用部分
 #                      （对静态 Qt 收益最大：只链接真正用到的 Qt 代码）
-#   -flto              链接期优化，跨编译单元消除冗余
+# 注：不用 -flto —— w64devkit 精简版 GCC 未启用 LTO 支持，会报错。
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(CMAKE_CXX_FLAGS_RELEASE
-        "${CMAKE_CXX_FLAGS_RELEASE} -Os -ffunction-sections -fdata-sections -flto")
+        "${CMAKE_CXX_FLAGS_RELEASE} -Os -ffunction-sections -fdata-sections")
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE
-        "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -Wl,--gc-sections -flto")
+        "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -Wl,--gc-sections")
 endif()
 
 # MSVC 使用 UTF-8 源码字符集（源码含中文注释/字符串）
