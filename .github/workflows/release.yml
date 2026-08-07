@@ -1,10 +1,19 @@
 name: build-release
 
 # 触发方式：
-#   - 推送 v* 标签（如 v2.1.0）→ 自动构建并创建 Release 上传 exe
-#   - 手动触发（Actions 页面 Run workflow）→ 构建但不发布，仅产出构建报告
+#   - 推送到 master → 编译/缓存 Qt + 编译应用（验证构建，不发布）
+#   - 推送 v* 标签（如 v2.1.0）→ 从 master 缓存恢复 Qt → 编译应用 → 创建 Release
+#   - 手动触发（Actions 页面 Run workflow）→ 同 master 推送
+#
+# ⚠️ 缓存作用域：GitHub Actions 缓存按分支/tag 隔离，不同 tag 之间互不可见。
+#    tag 触发的 workflow 只能读取默认分支(master)的缓存。因此 Qt 编译必须在
+#    master 上执行并保存缓存，tag 触发时仅恢复缓存——否则每个新 tag 都要全量
+#    重编 Qt（~37 分钟）。详见:
+#    https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#restrictions-for-accessing-a-cache
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
   workflow_dispatch:
@@ -13,12 +22,16 @@ permissions:
   contents: write
 
 jobs:
-  # ============ job 1: 编译静态 Qt 库（成功后缓存） ============
+  # ============ job 1: 编译静态 Qt 库（仅在 master 分支执行并缓存） ============
   # actions/cache 只在 job 成功时保存。把 Qt 编译拆成独立 job，
   # 即使后续应用编译失败，Qt 缓存也已被保存，下次不再全量重编。
+  #
+  # ⚠️ 只在分支(非 tag)上运行：tag 缓存作用域互相隔离，在 tag 上保存的缓存
+  #    其他 tag 无法访问。在 master 上保存的缓存所有 tag/分支都能读取。
   build-qt-static:
     name: Build static Qt libs (cached)
     runs-on: windows-latest
+    if: github.ref_type == 'branch'
     timeout-minutes: 90
     env:
       W64DEVKIT: ${{ github.workspace }}\w64devkit
@@ -85,6 +98,10 @@ jobs:
   build-app:
     name: Build & release app
     needs: build-qt-static
+    # master 推送时 build-qt-static 正常执行 → 本 job 等其完成后运行
+    # tag 推送时 build-qt-static 被跳过(skipped) → 本 job 仍需运行，
+    # 从 master 缓存恢复 Qt 库后直接编译应用
+    if: ${{ !cancelled() && (needs.build-qt-static.result == 'success' || needs.build-qt-static.result == 'skipped') }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -118,7 +135,7 @@ jobs:
           $exe = Get-ChildItem "$env:GITHUB_WORKSPACE\upx" -Recurse -Filter upx.exe | Select-Object -First 1
           Copy-Item $exe.FullName "$env:GITHUB_WORKSPACE\upx\upx.exe" -Force
 
-      # 恢复 job1 保存的缓存（Qt 已编译则跳过，秒过）
+      # 恢复 master 分支上保存的 Qt 缓存（tag 触发时也能读取 master 缓存）
       - name: Cache Qt sources
         id: cache-qt-src
         uses: actions/cache@v4
