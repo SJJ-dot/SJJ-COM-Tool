@@ -81,7 +81,7 @@ if "%JOBS%"=="" set "JOBS=8"
 REM ---------- [3/6] qtbase ----------
 if not exist "%QT_CORE%" (
     echo.
-    echo [3/6] Building static qtbase (first run ~12 min, please wait)...
+    echo [3/6] Building static qtbase, first run ~12 min, please wait...
     if not exist "%QT_SRC%\qtbase-static-build" mkdir "%QT_SRC%\qtbase-static-build"
     pushd "%QT_SRC%\qtbase-static-build"
     call "%QT_SRC%\qtbase\configure.bat" -static -release -opensource -confirm-license -prefix "%QT_STATIC_PREFIX%" -nomake examples -nomake tests -no-opengl -no-dbus -no-feature-vulkan
