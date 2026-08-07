@@ -153,7 +153,7 @@ jobs:
       - name: Verify artifact
         shell: pwsh
         run: |
-          $exe = Get-Item "cpp\dist_static\SJJ-COM-Tool.exe"
+          $exe = Get-Item "cpp\dist_static\SuperCOM.exe"
           Write-Host "exe size: $($exe.Length) bytes"
           if ($exe.Length -gt 60MB) { throw "exe unexpectedly large: $($exe.Length)" }
           if ($exe.Length -lt 5MB)  { throw "exe too small (strip/UPX failed?): $($exe.Length)" }
@@ -165,6 +165,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            cpp/dist_static/SJJ-COM-Tool.exe
+            cpp/dist_static/SuperCOM.exe
           generate_release_notes: true
           fail_on_unmatched_files: true
