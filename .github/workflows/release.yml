@@ -211,19 +211,36 @@ jobs:
             Write-Host "UPX variant not produced (UPX tool missing) - continuing"
           }
 
-      # 上传产物到 Actions 页面：任何运行(含 master 推送/手动触发)都能下载测试，
-      # 不依赖 Release。UPX 版缺失时仅警告不失败。
-      - name: Upload artifacts (downloadable from Actions page)
-        uses: actions/upload-artifact@v4
+      # 非 tag 构建：更新固定的 "dev-build" 草稿 Release，页面可直接看到/下载
+      # 两个 exe（Actions artifact 强制打包成 zip，无法直接展示 exe，故用 draft release）。
+      # 先删旧草稿(含其自动 tag)再重建，保证 Release 列表只有一个 Dev build 入口。
+      - name: Delete old dev-build draft (if any)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete dev-build --repo ${{ github.repository }} --yes --cleanup-tag 2>$null
+          exit 0
+
+      - name: Upload dev build to draft release
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
         with:
-          name: SuperCOM-${{ steps.ver.outputs.version }}
-          path: |
+          tag_name: dev-build
+          name: Dev build ${{ steps.ver.outputs.version }}
+          draft: true
+          body: |
+            CI 自动构建产物（master 推送 / 手动触发）。
+            直接下载两个 exe：
+            - SuperCOM.exe       无 UPX（推荐，Defender 干净）
+            - SuperCOM_upx.exe   UPX 压缩（体积小，但可能触发 Defender 误报）
+          files: |
             cpp/dist_static/SuperCOM.exe
             cpp/dist_static/SuperCOM_upx.exe
-          if-no-files-found: warn
-          retention-days: 30
+          fail_on_unmatched_files: false
 
-      # 仅在 tag 推送时创建 Release（手动触发则跳过，仅构建验证）
+      # 仅在 tag 推送时创建正式 Release（手动触发则跳过，仅构建验证）
       # 上传两个版本；UPX 版可能因工具缺失不存在，故 fail_on_unmatched_files=false
       - name: Create Release & upload
         if: startsWith(github.ref, 'refs/tags/')
