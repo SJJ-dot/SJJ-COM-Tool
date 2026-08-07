@@ -155,7 +155,13 @@ jobs:
 
       # Qt 缓存命中时 build_static.bat 自动跳过 [3/6]-[5/6]，直接编译应用
       # 版本号：tag 触发时取 tag 名（去 v 前缀，如 v2.0.3 -> 2.0.3），
-      # 手动触发时用最新 tag 或 "dev"
+      # 分支触发(如 master)时从远程取最新 v* tag，取不到则 "dev"
+      #
+      # ⚠️ 之前在此失败：git describe 在浅克隆(actions/checkout 默认
+      #    fetch-depth=1)且 HEAD 无可达 tag 时返回非零退出码，而 GitHub
+      #    Actions 的 pwsh 会把最后一条原生命令的退出码当作步骤退出码，
+      #    导致步骤失败。现改用 git ls-remote(不依赖本地克隆历史)并
+      #    显式 exit 0，git 失败时静默降级为 "dev"。
       - name: Resolve app version
         id: ver
         shell: pwsh
@@ -164,13 +170,19 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $ver = $env:GITHUB_REF_NAME -replace '^v', ''
           } else {
-            # 手动触发：尝试取最新 tag，否则 dev
-            git fetch --tags --force --quiet
-            $latest = git describe --tags --abbrev=0 2>$null
-            if ($LASTEXITCODE -eq 0 -and $latest) { $ver = $latest -replace '^v', '' }
+            $tags = git ls-remote --tags --refs origin 2>$null
+            if ($tags) {
+              $latestTag = $tags |
+                ForEach-Object { ($_ -split 'refs/tags/')[-1] } |
+                Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+                Sort-Object { [version]($_ -replace '^v', '') } -Descending |
+                Select-Object -First 1
+              if ($latestTag) { $ver = $latestTag -replace '^v', '' }
+            }
           }
           Write-Host "app version: $ver"
           echo "version=$ver" >> $env:GITHUB_OUTPUT
+          exit 0
 
       - name: Build static exe (build_static.bat)
         shell: cmd
