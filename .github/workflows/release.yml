@@ -36,6 +36,16 @@ jobs:
           Get-ChildItem "$env:GITHUB_WORKSPACE\w64devkit\bin\gcc.exe" | Select-Object FullName
           & "$env:GITHUB_WORKSPACE\w64devkit\bin\gcc.exe" --version | Select-Object -First 1
 
+      # w64devkit v1.23.0 不包含 ninja，单独下载放入其 bin（build_static.bat 会优先用它，
+      # 找不到再退回 PATH 中的 ninja）
+      - name: Download ninja (for w64devkit v1.23.0)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile ninja.zip
+          Expand-Archive ninja.zip -DestinationPath "$env:GITHUB_WORKSPACE\ninja" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\ninja\ninja.exe" "$env:GITHUB_WORKSPACE\w64devkit\bin\ninja.exe" -Force
+          & "$env:GITHUB_WORKSPACE\w64devkit\bin\ninja.exe" --version
+
       - name: Download UPX packer
         shell: pwsh
         run: |

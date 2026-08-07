@@ -46,7 +46,19 @@ if not exist "%TOOLCHAIN_BIN%\gcc.exe" (
 set "PATH=%TOOLCHAIN_BIN%;%PATH%"
 set "CC=%TOOLCHAIN_BIN%\gcc.exe"
 set "CXX=%TOOLCHAIN_BIN%\g++.exe"
-for /f "delims=" %%v in ('"%TOOLCHAIN_BIN%\gcc.exe" --version ^| findstr /b "gcc"') do echo   [OK] %%v
+"%TOOLCHAIN_BIN%\gcc.exe" --version 2>nul | findstr /b "gcc"
+
+REM ---------- ninja detection ----------
+REM w64devkit v1.23.0 does NOT ship ninja; the app build hardcodes a ninja path,
+REM so fall back to a ninja found on PATH (e.g. GitHub Actions runner provides one).
+set "NINJA="
+if exist "%TOOLCHAIN_BIN%\ninja.exe" set "NINJA=%TOOLCHAIN_BIN%\ninja.exe"
+if not defined NINJA for /f "delims=" %%i in ('where ninja 2^>nul') do if not defined NINJA set "NINJA=%%i"
+if not defined NINJA (
+    echo   [ERROR] ninja not found. Install ninja or w64devkit v2.9.0+, or put ninja.exe on PATH.
+    exit /b 1
+)
+echo   [OK] ninja: %NINJA%
 
 REM ---------- static Qt ready? ----------
 set "QT_CORE=%QT_STATIC_PREFIX%\lib\libQt6Core.a"
@@ -99,7 +111,7 @@ if not exist "%QT_CORE%" (
         echo   [ERROR] qtbase configure failed, see log above
         exit /b 1
     )
-    ninja -j%JOBS%
+    "%NINJA%" -j%JOBS%
     if errorlevel 1 (
         popd
         echo   [ERROR] qtbase build failed
@@ -127,7 +139,7 @@ if not exist "%QT_CORE5%" (
         echo   [ERROR] qt5compat configure failed
         exit /b 1
     )
-    ninja -j%JOBS%
+    "%NINJA%" -j%JOBS%
     if errorlevel 1 (
         popd
         echo   [ERROR] qt5compat build failed
@@ -155,7 +167,7 @@ if not exist "%QT_SERIAL%" (
         echo   [ERROR] qtserialport configure failed
         exit /b 1
     )
-    ninja -j%JOBS%
+    "%NINJA%" -j%JOBS%
     if errorlevel 1 (
         popd
         echo   [ERROR] qtserialport build failed
@@ -176,16 +188,7 @@ REM ---------- [6/6] build app ----------
 echo.
 echo [6/6] Building app (static)...
 pushd "%APP_DIR%"
-REM rebuild cache if Qt prefix changed
-if exist build_static\CMakeCache.txt (
-    set "QT_STATIC_FWD=%QT_STATIC_PREFIX:\=/%"
-    findstr /C:"%QT_STATIC_FWD%" build_static\CMakeCache.txt >nul
-    if errorlevel 1 (
-        echo   [INFO] Qt prefix changed, recreating build_static cache...
-        rmdir /s /q build_static
-    )
-)
-cmake -S . -B build_static -G Ninja -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_C_COMPILER="%TOOLCHAIN_BIN%\gcc.exe" -DCMAKE_CXX_COMPILER="%TOOLCHAIN_BIN%\g++.exe" -DCMAKE_MAKE_PROGRAM="%TOOLCHAIN_BIN%\ninja.exe"
+cmake -S . -B build_static -G Ninja -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_C_COMPILER="%TOOLCHAIN_BIN%\gcc.exe" -DCMAKE_CXX_COMPILER="%TOOLCHAIN_BIN%\g++.exe" -DCMAKE_MAKE_PROGRAM="%NINJA%"
 if errorlevel 1 (
     popd
     echo   [ERROR] app configure failed; try deleting cpp\build_static and rerun
