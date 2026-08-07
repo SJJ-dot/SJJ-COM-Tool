@@ -25,7 +25,7 @@ void UpdateChecker::check(bool manual) {
         return;   // 上一次检查还在进行
     m_manual = manual;
     QNetworkRequest req{QUrl(sjj::UPDATE_CHECK_URL)};
-    req.setRawHeader("User-Agent", QStringLiteral("SJJ-COM-Tool/%1").arg(APP_VERSION).toUtf8());
+    req.setRawHeader("User-Agent", QStringLiteral("SuperCOM/%1").arg(APP_VERSION).toUtf8());
     req.setRawHeader("Accept", "application/vnd.github+json");
     m_reply = m_nam.get(req);
     connect(m_reply, &QNetworkReply::finished, this, &UpdateChecker::onFinished);
@@ -59,7 +59,7 @@ void UpdateChecker::onFinished() {
             for (const QJsonValue& v : assets) {
                 const QJsonObject a = v.toObject();
                 if (a.value(QStringLiteral("name")).toString().toLower()
-                    == QStringLiteral("sjj-com-tool.exe")) {
+                    == QStringLiteral("supercom.exe")) {
                     exeUrl = a.value(QStringLiteral("browser_download_url")).toString();
                     break;
                 }
@@ -91,7 +91,7 @@ void ExeDownloader::cancel() {
 qint64 ExeDownloader::checkRangeSupport() {
     QNetworkAccessManager nam;
     QNetworkRequest req{QUrl(m_url)};
-    req.setRawHeader("User-Agent", QStringLiteral("SJJ-COM-Tool/%1").arg(APP_VERSION).toUtf8());
+    req.setRawHeader("User-Agent", QStringLiteral("SuperCOM/%1").arg(APP_VERSION).toUtf8());
     req.setRawHeader("Range", "bytes=0-0");
     QNetworkReply* reply = nam.get(req);
     QEventLoop loop;
@@ -115,7 +115,7 @@ qint64 ExeDownloader::checkRangeSupport() {
 void ExeDownloader::downloadSingle(const QString& tmp, qint64 total) {
     QNetworkAccessManager nam;
     QNetworkRequest req{QUrl(m_url)};
-    req.setRawHeader("User-Agent", QStringLiteral("SJJ-COM-Tool/%1").arg(APP_VERSION).toUtf8());
+    req.setRawHeader("User-Agent", QStringLiteral("SuperCOM/%1").arg(APP_VERSION).toUtf8());
     QNetworkReply* reply = nam.get(req);
     QFile f(tmp);
     if (!f.open(QIODevice::WriteOnly))
@@ -159,7 +159,7 @@ public:
     void run() override {
         QNetworkAccessManager nam;
         QNetworkRequest req{QUrl(m_url)};
-        req.setRawHeader("User-Agent", QStringLiteral("SJJ-COM-Tool/%1").arg(APP_VERSION).toUtf8());
+        req.setRawHeader("User-Agent", QStringLiteral("SuperCOM/%1").arg(APP_VERSION).toUtf8());
         req.setRawHeader("Range", QStringLiteral("bytes=%1-%2").arg(m_start).arg(m_end).toUtf8());
         QNetworkReply* reply = nam.get(req);
         QFile f(m_tmp);
@@ -250,7 +250,7 @@ void ExeDownloader::downloadMulti(const QString& tmp, qint64 total) {
 
 void ExeDownloader::run() {
     const QString tmp = QCoreApplication::applicationDirPath()
-        + QStringLiteral("/SJJ-COM-Tool.update.exe");
+        + QStringLiteral("/SuperCOM.update.exe");
     try {
         const qint64 total = checkRangeSupport();
         if (total > 0 && m_threads > 1 && total > 2 * 1024 * 1024) {

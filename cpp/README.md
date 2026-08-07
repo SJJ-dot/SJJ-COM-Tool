@@ -1,4 +1,4 @@
-# SJJ-COM Tool（C++ / Qt6 版）
+# SuperCOM（C++ / Qt6 版）
 
 Windows 串口调试工具，功能与原 PySide6 版（`../sjj_com_tool.py`）完全一致：
 模仿 SSCOM 软件功能，增加接收区滚动暂停、字符编码切换、搜索、筛选功能。
@@ -24,12 +24,12 @@ cmake --build build --config Release
 ```
 
 - MSVC 请把 `-DCMAKE_PREFIX_PATH` 指向 `C:/Qt/6.8.0/msvc2019_64`。
-- 生成的可执行文件在 `build/` 下：`SJJ-COM-Tool.exe`。
+- 生成的可执行文件在 `build/` 下：`SuperCOM.exe`。
 - 可指定版本号注入（GitHub Actions 打包用）：`-DAPP_VERSION=v1.0.1`。
 - 运行需要 Qt 运行库（把 `C:/Qt/.../bin` 加入 PATH，或用 windeployqt 部署）：
 
 ```bash
-C:/Qt/6.8.0/mingw_64/bin/windeployqt.exe build/SJJ-COM-Tool.exe
+C:/Qt/6.8.0/mingw_64/bin/windeployqt.exe build/SuperCOM.exe
 ```
 
 ## 目录结构
@@ -73,7 +73,7 @@ cpp/
 
 ## 静态单文件构建（零依赖 exe）
 
-**一键脚本**：双击 `build_static.bat` 即可（自动检查工具链 → 首次自动编译静态 Qt → 静态编译应用 → 输出 `dist_static\SJJ-COM-Tool.exe`）。
+**一键脚本**：双击 `build_static.bat` 即可（自动检查工具链 → 首次自动编译静态 Qt → 静态编译应用 → 输出 `dist_static\SuperCOM.exe`）。
 已完成的步骤自动跳过（增量构建，再次运行约 1 分钟）。可通过环境变量覆盖路径：
 `W64DEVKIT`（工具链目录）、`QT_SRC`（源码目录）、`QT_STATIC_PREFIX`（静态 Qt 安装目录）。
 
@@ -104,7 +104,7 @@ cmake -S . -B build_static -G Ninja -DCMAKE_PREFIX_PATH=D:/dev/qt-static-6.8.2 \
 cmake --build build_static
 ```
 
-产物 `build_static/SJJ-COM-Tool.exe`（约 48MB 未压缩）为**纯静态链接**：
+产物 `build_static/SuperCOM.exe`（约 48MB 未压缩）为**纯静态链接**：
 `objdump -p` 确认只依赖 Windows 系统 DLL（KERNEL32/USER32/GDI32/WS2_32/SETUPAPI 等），
 无任何 Qt / libgcc / libstdc++ / winpthread DLL，可单独拷贝到任意 Windows 10/11 运行。
 
@@ -127,6 +127,6 @@ cmake --build build_static
 - 注意：不要用环境变量名 `UPX`（UPX 官方保留它作为默认参数），脚本用 `UPX_TOOL`
 
 > 注意：Qt 6.8 的样式插件已从 Vista 风格改为 ModernWindows 风格；
-> 静态导入插件逻辑在 `main.cpp`（`SJJ_STATIC_BUILD` 宏）与 CMakeLists 中自动处理。
+> 静态导入插件逻辑在 `main.cpp`（`SUPERCOM_STATIC_BUILD` 宏）与 CMakeLists 中自动处理。
 - 本机未安装 Qt 时无法直接编译；如需在 CI 中构建，参考 `.github/workflows` 中
   PySide6 版的打包流程改为 Qt6 CMake 即可。

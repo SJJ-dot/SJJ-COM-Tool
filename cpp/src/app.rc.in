@@ -1,4 +1,4 @@
-// SJJ-COM-Tool Windows 版本资源（由 CMake configure_file 注入版本号）
+// SuperCOM Windows 版本资源（由 CMake configure_file 注入版本号）
 #include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
@@ -19,12 +19,12 @@ BEGIN
         BLOCK "080404b0"
         BEGIN
             VALUE "CompanyName",      "SJJ"
-            VALUE "FileDescription",  "SJJ-COM-Tool - Windows Serial Port Debugger"
+            VALUE "FileDescription",  "SuperCOM - Windows Serial Port Debugger"
             VALUE "FileVersion",      "@APP_VERSION@"
-            VALUE "InternalName",     "SJJ-COM-Tool"
+            VALUE "InternalName",     "SuperCOM"
             VALUE "LegalCopyright",   "Copyright (C) 2026 SJJ"
-            VALUE "OriginalFilename", "SJJ-COM-Tool.exe"
-            VALUE "ProductName",      "SJJ-COM-Tool"
+            VALUE "OriginalFilename", "SuperCOM.exe"
+            VALUE "ProductName",      "SuperCOM"
             VALUE "ProductVersion",   "@APP_VERSION@"
         END
     END

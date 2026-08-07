@@ -660,7 +660,7 @@ void SerialTool::applyTheme(const QString& themeName) {
         QStringLiteral("color:%1;font-weight:bold;")
             .arg(m_themeC.value(QStringLiteral("err_color"))));
     m_lblApp->setText(
-        QStringLiteral("<a href=\"github\" style=\"color:%1;\">SJJ\u2011COM Tool</a>")
+        QStringLiteral("<a href=\"github\" style=\"color:%1;\">SuperCOM</a>")
             .arg(m_themeC.value(QStringLiteral("link_color"))));
     const auto checkboxes = findChildren<ThemeCheckBox*>();
     for (auto* cb : checkboxes)
@@ -846,9 +846,9 @@ void SerialTool::onUpdateDownloaded(const QString& tmp) {
     closeDownloadUi();
     refreshStatus();
     m_updateTmp = tmp;
-    // 源码运行（exe 目录下没有 SJJ-COM-Tool.exe）：无自动替换，提示文件位置
+    // 源码运行（exe 目录下没有 SuperCOM.exe）：无自动替换，提示文件位置
     const QString exeDir = QCoreApplication::applicationDirPath();
-    const bool sourceMode = !QFileInfo::exists(exeDir + QStringLiteral("/SJJ-COM-Tool.exe"));
+    const bool sourceMode = !QFileInfo::exists(exeDir + QStringLiteral("/SuperCOM.exe"));
     if (sourceMode) {
         m_btnRestart->hide();
         QMessageBox::information(
@@ -894,8 +894,8 @@ void SerialTool::performUpdateRestart() {
         return;
     }
     const QString exeDir = QCoreApplication::applicationDirPath();
-    const QString target = exeDir + QStringLiteral("/SJJ-COM-Tool.exe");
-    const QString bat = exeDir + QStringLiteral("/_sjj_update.bat");
+    const QString target = exeDir + QStringLiteral("/SuperCOM.exe");
+    const QString bat = exeDir + QStringLiteral("/_supercom_update.bat");
     // cmd/start 对正斜杠路径兼容性差（explorer.exe 传正斜杠会失败），统一转反斜杠
     const QString tmp = QDir::toNativeSeparators(m_updateTmp);
     const QString tgt = QDir::toNativeSeparators(target);
@@ -906,8 +906,8 @@ void SerialTool::performUpdateRestart() {
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
         ":wait\r\n"
-        "tasklist /fi \"imagename eq SJJ-COM-Tool.exe\" 2>nul "
-        "| find /i \"SJJ-COM-Tool.exe\" >nul\r\n"
+        "tasklist /fi \"imagename eq SuperCOM.exe\" 2>nul "
+        "| find /i \"SuperCOM.exe\" >nul\r\n"
         "if errorlevel 1 goto replace\r\n"
         "timeout /t 1 /nobreak >nul\r\n"
         "goto wait\r\n"

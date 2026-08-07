@@ -7,15 +7,15 @@
 
 #include "serialtool.h"
 
-// ===== 静态链接 Qt 时显式导入插件（由 CMake 定义 SJJ_STATIC_BUILD） =====
-#ifdef SJJ_STATIC_BUILD
+// ===== 静态链接 Qt 时显式导入插件（由 CMake 定义 SUPERCOM_STATIC_BUILD） =====
+#ifdef SUPERCOM_STATIC_BUILD
 Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)      // Windows 平台集成（必需）
 Q_IMPORT_PLUGIN(QModernWindowsStylePlugin)      // Windows 原生样式
 #endif
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("SJJ-COM-Tool"));
+    app.setApplicationName(QStringLiteral("SuperCOM"));
     // 统一控件文字字号 = 接收区数据文本字号（10pt），字体族保持系统默认（中文正常显示）
     QFont f = app.font();
     f.setPointSize(10);

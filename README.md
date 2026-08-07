@@ -1,4 +1,4 @@
-# SJJ-COM Tool
+# SuperCOM
 
 Windows 串口调试工具（**C++ / Qt6** 实现），模仿 SSCOM 软件功能，增加接收区滚动暂停、字符编码切换、搜索、筛选功能。
 
@@ -12,7 +12,7 @@ Windows 串口调试工具（**C++ / Qt6** 实现），模仿 SSCOM 软件功能
 | `cpp/` | C++/Qt6 源码工程（CMake 构建） |
 | `cpp/README.md` | 依赖要求、构建与部署说明 |
 | `cpp/dist/` | 动态链接版（exe + Qt 运行库文件夹，免安装） |
-| `cpp/dist_static/SJJ-COM-Tool.exe` | **静态单文件版**（零依赖，一个 exe 拷贝即用，strip+UPX 后约 9.8MB） |
+| `cpp/dist_static/SuperCOM.exe` | **静态单文件版**（零依赖，一个 exe 拷贝即用，strip+UPX 后约 9.8MB） |
 | `imgs/` | 应用图标与界面截图 |
 
 ## 功能特性

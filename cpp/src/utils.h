@@ -17,11 +17,11 @@ namespace sjj {
 // ============ 常量 ============
 constexpr int MAX_RECORDS = 5000;          // 接收记录上限
 
-inline const QString APP_TITLE = QStringLiteral("SJJ\u2011COM Tool"); // U+2011 非断连字符
-inline const QString GITHUB_URL = QStringLiteral("https://github.com/SJJ-dot/SJJ-COM-Tool.git");
-inline const QString GITHUB_REPO = QStringLiteral("SJJ-dot/SJJ-COM-Tool");
+inline const QString APP_TITLE = QStringLiteral("SuperCOM");
+inline const QString GITHUB_URL = QStringLiteral("https://github.com/SJJ-dot/SuperCOM.git");
+inline const QString GITHUB_REPO = QStringLiteral("SJJ-dot/SuperCOM");
 inline const QString UPDATE_CHECK_URL =
-    QStringLiteral("https://api.github.com/repos/SJJ-dot/SJJ-COM-Tool/releases/latest");
+    QStringLiteral("https://api.github.com/repos/SJJ-dot/SuperCOM/releases/latest");
 
 inline const QStringList DEFAULT_BAUDRATES = {
     QStringLiteral("1200"), QStringLiteral("2400"), QStringLiteral("4800"),

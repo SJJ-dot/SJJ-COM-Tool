@@ -1,5 +1,5 @@
 #pragma once
-// SJJ-COM Tool 主窗口（C++/Qt6 版，功能与 PySide6 版完全一致）
+// SuperCOM 主窗口（C++/Qt6 版，功能与 PySide6 版完全一致）
 
 #include <QWidget>
 #include <QSerialPort>
