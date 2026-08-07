@@ -218,32 +218,49 @@ if errorlevel 1 (
 )
 popd
 
-REM ---------- output ----------
+REM ---------- output: 同时产出 无UPX版 + UPX版 两个 exe ----------
 if not exist "%APP_DIR%dist_static" mkdir "%APP_DIR%dist_static"
 copy /y "%APP_DIR%build_static\SuperCOM.exe" "%APP_DIR%dist_static\SuperCOM.exe" >nul
 
-REM ---------- [7/7] shrink: strip symbols + UPX pack ----------
+REM ---------- [7/7] shrink: strip symbols ----------
 echo.
-echo [7/7] Shrinking exe (strip + UPX)...
+echo [7/7] Shrinking exe (strip)...
 "%TOOLCHAIN_BIN%\strip.exe" -s "%APP_DIR%dist_static\SuperCOM.exe"
 if errorlevel 1 echo   [WARN] strip failed, skipping (exe stays unstripped)
 
+REM ---------- [7.5/7] 可选: 生成 UPX 压缩版 ----------
+REM 说明: UPX 加壳会触发 Microsoft Defender 启发式误报 (Wacatac/PUA 规则)，
+REM       但体积小 (~9.8MB)。因此同时产出两个版本:
+REM   - dist_static\SuperCOM.exe       无 UPX (推荐分发, ~20MB, Defender 干净)
+REM   - dist_static\SuperCOM_upx.exe   UPX 压缩 (体积小, 但 Defender 可能误报)
+REM 默认: 找到 UPX 工具即自动生成 UPX 版；设 ENABLE_UPX=0 可只出无 UPX 版。
 if "%UPX_TOOL%"=="" set "UPX_TOOL=D:\dev\toolchains\upx\upx-4.2.4-win64\upx.exe"
 if not exist "%UPX_TOOL%" set "UPX_TOOL=D:\dev\toolchains\upx\upx.exe"
+if /I "%ENABLE_UPX%"=="0" set "UPX_TOOL="
 if not exist "%UPX_TOOL%" (
-    echo   [SKIP] UPX not found: %UPX_TOOL%
+    echo   [SKIP] UPX not found, only non-UPX version produced
     echo   Download https://github.com/upx/upx/releases and set UPX_TOOL env var,
-    echo   or place upx.exe at D:\dev\toolchains\upx\upx.exe to enable packing
+    echo   or place upx.exe at D:\dev\toolchains\upx\upx.exe to produce the UPX variant
 ) else (
-    "%UPX_TOOL%" --best -q "%APP_DIR%dist_static\SuperCOM.exe"
-    if errorlevel 1 echo   [WARN] UPX failed, exe stays uncompressed
+    echo.
+    echo [7.5/7] Producing UPX-packed variant...
+    copy /y "%APP_DIR%dist_static\SuperCOM.exe" "%APP_DIR%dist_static\SuperCOM_upx.exe" >nul
+    "%UPX_TOOL%" --best -q "%APP_DIR%dist_static\SuperCOM_upx.exe"
+    if errorlevel 1 (
+        echo   [WARN] UPX failed, removing UPX variant
+        del "%APP_DIR%dist_static\SuperCOM_upx.exe" 2>nul
+    )
 )
 
 echo.
 echo ============================================================
 echo  BUILD OK!
-echo  Single-file exe: %APP_DIR%dist_static\SuperCOM.exe
-for %%A in ("%APP_DIR%dist_static\SuperCOM.exe") do echo  Size: %%~zA bytes
+echo  Non-UPX exe : %APP_DIR%dist_static\SuperCOM.exe
+for %%A in ("%APP_DIR%dist_static\SuperCOM.exe") do echo    Size: %%~zA bytes
+if exist "%APP_DIR%dist_static\SuperCOM_upx.exe" (
+echo  UPX-packed   : %APP_DIR%dist_static\SuperCOM_upx.exe
+for %%A in ("%APP_DIR%dist_static\SuperCOM_upx.exe") do echo    Size: %%~zA bytes
+)
 echo  (zero-dependency, runs on any 64-bit Win10/11)
 echo ============================================================
 endlocal

@@ -191,21 +191,34 @@ jobs:
         run: |
           call cpp\build_static.bat
 
-      - name: Verify artifact
+      # 验证两个产物：SuperCOM.exe(无UPX,推荐) + SuperCOM_upx.exe(可选)
+      - name: Verify artifacts
         shell: pwsh
         run: |
-          $exe = Get-Item "cpp\dist_static\SuperCOM.exe"
-          Write-Host "exe size: $($exe.Length) bytes"
-          if ($exe.Length -gt 60MB) { throw "exe unexpectedly large: $($exe.Length)" }
-          if ($exe.Length -lt 5MB)  { throw "exe too small (strip/UPX failed?): $($exe.Length)" }
-          Write-Host "artifact OK: $($exe.Length) bytes (~9.7MB after strip+UPX)"
+          $plain = Get-Item "cpp\dist_static\SuperCOM.exe"
+          Write-Host "non-UPX exe size: $($plain.Length) bytes"
+          if ($plain.Length -gt 100MB) { throw "non-UPX exe unexpectedly large: $($plain.Length)" }
+          if ($plain.Length -lt 5MB)   { throw "non-UPX exe too small: $($plain.Length)" }
+          Write-Host "artifact OK: $($plain.Length) bytes (~20MB, no UPX, Defender clean)"
+
+          $upx = Get-Item "cpp\dist_static\SuperCOM_upx.exe" -ErrorAction SilentlyContinue
+          if ($upx) {
+            Write-Host "UPX exe size: $($upx.Length) bytes"
+            if ($upx.Length -gt 60MB) { throw "UPX exe unexpectedly large: $($upx.Length)" }
+            if ($upx.Length -lt 1MB)  { throw "UPX exe too small: $($upx.Length)" }
+            Write-Host "UPX artifact OK: $($upx.Length) bytes (~9.7MB)"
+          } else {
+            Write-Host "UPX variant not produced (UPX tool missing) - continuing"
+          }
 
       # 仅在 tag 推送时创建 Release（手动触发则跳过，仅构建验证）
+      # 上传两个版本；UPX 版可能因工具缺失不存在，故 fail_on_unmatched_files=false
       - name: Create Release & upload
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             cpp/dist_static/SuperCOM.exe
+            cpp/dist_static/SuperCOM_upx.exe
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
