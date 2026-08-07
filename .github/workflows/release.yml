@@ -94,7 +94,7 @@ jobs:
             Write-Host "qt-static missing"
           }
 
-  # ============ job 2: 恢复缓存 → 编译应用 → strip/UPX → 发布 ============
+  # ============ job 2: 恢复缓存 → 编译应用 → strip → 发布 ============
   build-app:
     name: Build & release app
     needs: build-qt-static
@@ -108,7 +108,6 @@ jobs:
       W64DEVKIT: ${{ github.workspace }}\w64devkit
       QT_SRC: ${{ github.workspace }}\qt-src
       QT_STATIC_PREFIX: ${{ github.workspace }}\qt-static
-      UPX_TOOL: ${{ github.workspace }}\upx\upx.exe
 
     steps:
       - name: Checkout
@@ -126,14 +125,6 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile ninja.zip
           Expand-Archive ninja.zip -DestinationPath "$env:GITHUB_WORKSPACE\ninja" -Force
           Copy-Item "$env:GITHUB_WORKSPACE\ninja\ninja.exe" "$env:GITHUB_WORKSPACE\w64devkit\bin\ninja.exe" -Force
-
-      - name: Download UPX packer
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip" -OutFile upx.zip
-          Expand-Archive upx.zip -DestinationPath "$env:GITHUB_WORKSPACE\upx" -Force
-          $exe = Get-ChildItem "$env:GITHUB_WORKSPACE\upx" -Recurse -Filter upx.exe | Select-Object -First 1
-          Copy-Item $exe.FullName "$env:GITHUB_WORKSPACE\upx\upx.exe" -Force
 
       # 恢复 master 分支上保存的 Qt 缓存（tag 触发时也能读取 master 缓存）
       - name: Cache Qt sources
@@ -191,25 +182,15 @@ jobs:
         run: |
           call cpp\build_static.bat
 
-      # 验证两个产物：SuperCOM.exe(无UPX,推荐) + SuperCOM_upx.exe(可选)
-      - name: Verify artifacts
+      # 验证产物 SuperCOM.exe（无 UPX，Defender 干净）
+      - name: Verify artifact
         shell: pwsh
         run: |
-          $plain = Get-Item "cpp\dist_static\SuperCOM.exe"
-          Write-Host "non-UPX exe size: $($plain.Length) bytes"
-          if ($plain.Length -gt 100MB) { throw "non-UPX exe unexpectedly large: $($plain.Length)" }
-          if ($plain.Length -lt 5MB)   { throw "non-UPX exe too small: $($plain.Length)" }
-          Write-Host "artifact OK: $($plain.Length) bytes (~20MB, no UPX, Defender clean)"
-
-          $upx = Get-Item "cpp\dist_static\SuperCOM_upx.exe" -ErrorAction SilentlyContinue
-          if ($upx) {
-            Write-Host "UPX exe size: $($upx.Length) bytes"
-            if ($upx.Length -gt 60MB) { throw "UPX exe unexpectedly large: $($upx.Length)" }
-            if ($upx.Length -lt 1MB)  { throw "UPX exe too small: $($upx.Length)" }
-            Write-Host "UPX artifact OK: $($upx.Length) bytes (~9.7MB)"
-          } else {
-            Write-Host "UPX variant not produced (UPX tool missing) - continuing"
-          }
+          $exe = Get-Item "cpp\dist_static\SuperCOM.exe"
+          Write-Host "exe size: $($exe.Length) bytes"
+          if ($exe.Length -gt 100MB) { throw "exe unexpectedly large: $($exe.Length)" }
+          if ($exe.Length -lt 5MB)   { throw "exe too small: $($exe.Length)" }
+          Write-Host "artifact OK: $($exe.Length) bytes (~20MB, no UPX, Defender clean)"
 
       # 非 tag 构建：更新固定的 "dev-build" 草稿 Release，页面可直接看到/下载
       # 两个 exe（Actions artifact 强制打包成 zip，无法直接展示 exe，故用 draft release）。
@@ -232,22 +213,17 @@ jobs:
           draft: true
           body: |
             CI 自动构建产物（master 推送 / 手动触发）。
-            直接下载两个 exe：
-            - SuperCOM.exe       无 UPX（推荐，Defender 干净）
-            - SuperCOM_upx.exe   UPX 压缩（体积小，但可能触发 Defender 误报）
+            无 UPX 版（Defender 干净，推荐）。
           files: |
             cpp/dist_static/SuperCOM.exe
-            cpp/dist_static/SuperCOM_upx.exe
           fail_on_unmatched_files: false
 
       # 仅在 tag 推送时创建正式 Release（手动触发则跳过，仅构建验证）
-      # 上传两个版本；UPX 版可能因工具缺失不存在，故 fail_on_unmatched_files=false
       - name: Create Release & upload
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             cpp/dist_static/SuperCOM.exe
-            cpp/dist_static/SuperCOM_upx.exe
           generate_release_notes: true
           fail_on_unmatched_files: false

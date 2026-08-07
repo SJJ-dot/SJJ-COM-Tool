@@ -12,8 +12,7 @@ Windows 串口调试工具（**C++ / Qt6** 实现），模仿 SSCOM 软件功能
 | `cpp/` | C++/Qt6 源码工程（CMake 构建） |
 | `cpp/README.md` | 依赖要求、构建与部署说明 |
 | `cpp/dist/` | 动态链接版（exe + Qt 运行库文件夹，免安装） |
-| `cpp/dist_static/SuperCOM.exe` | **静态单文件版·无 UPX**（零依赖，一个 exe 拷贝即用，strip 后约 20MB，Defender 干净，**推荐分发**） |
-| `cpp/dist_static/SuperCOM_upx.exe` | **静态单文件版·UPX 压缩**（同上，约 9.8MB，但 UPX 加壳可能触发 Defender 误报，体积敏感时选用） |
+| `cpp/dist_static/SuperCOM.exe` | **静态单文件版**（零依赖，一个 exe 拷贝即用，strip 后约 20MB，Defender 干净） |
 | `imgs/` | 应用图标与界面截图 |
 
 ## 功能特性

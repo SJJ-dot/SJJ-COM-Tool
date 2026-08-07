@@ -108,23 +108,18 @@ cmake --build build_static
 `objdump -p` 确认只依赖 Windows 系统 DLL（KERNEL32/USER32/GDI32/WS2_32/SETUPAPI 等），
 无任何 Qt / libgcc / libstdc++ / winpthread DLL，可单独拷贝到任意 Windows 10/11 运行。
 
-### 一键脚本自动瘦身（strip + UPX）
+### 一键脚本自动瘦身（strip）
 
-`build_static.bat` 构建完成后自动执行瘦身（步骤 [7/7]），输出到 `dist_static/`：
+`build_static.bat` 构建完成后自动执行 strip（步骤 [7/7]），输出到 `dist_static/`：
 
 | 阶段 | 体积 |
 |------|------|
 | 编译产物（未 strip） | ~48 MB |
-| strip 去符号 | ~25 MB |
-| UPX 压缩 | **~9.8 MB** |
+| strip 去符号 | **~20 MB** |
 
 - strip 用工具链自带的 `strip.exe`，无条件执行
-- UPX 可选：默认找 `D:\dev\toolchains\upx\upx-4.2.4-win64\upx.exe`，
-  可用环境变量 `UPX_TOOL` 指定其他路径；找不到时跳过并提示（exe 保持 25MB）
-- UPX 压缩版启动时解压到内存，首次启动约慢 0.2~0.5s，功能完全一致
-- ⚠️ 个别杀软会对 UPX 加壳的 exe 误报（无签名 + 加壳），如遇误报请添加信任；
-  介意的话可在 bat 中删除 UPX 步骤，使用 25MB 的 strip 版
-- 注意：不要用环境变量名 `UPX`（UPX 官方保留它作为默认参数），脚本用 `UPX_TOOL`
+- ⚠️ 不再使用 UPX 压缩：UPX 加壳的 exe 会触发 Microsoft Defender 启发式误报
+  （Wacatac/PUA 规则，无签名 + 加壳的组合极易被报毒删除），实测确认后已移除。
 
 > 注意：Qt 6.8 的样式插件已从 Vista 风格改为 ModernWindows 风格；
 > 静态导入插件逻辑在 `main.cpp`（`SUPERCOM_STATIC_BUILD` 宏）与 CMakeLists 中自动处理。

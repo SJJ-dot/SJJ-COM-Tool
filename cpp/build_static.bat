@@ -17,8 +17,6 @@ REM                       (default: D:\dev\toolchains\w64devkit)
 REM    QT_SRC             Qt source dir (default: D:\dev\qt-src)
 REM    QT_STATIC_PREFIX   Qt static install dir
 REM                       (default: D:\dev\qt-static-6.8.2)
-REM    UPX_TOOL           UPX packer exe path (optional, enables size shrink)
-REM                       (default: D:\dev\toolchains\upx\upx-4.2.4-win64\upx.exe)
 REM ============================================================
 
 set "QT_VERSION=6.8.2"
@@ -218,7 +216,9 @@ if errorlevel 1 (
 )
 popd
 
-REM ---------- output: 同时产出 无UPX版 + UPX版 两个 exe ----------
+REM ---------- output: 单产物（无 UPX） ----------
+REM 说明: UPX 加壳会触发 Microsoft Defender 启发式误报 (Wacatac/PUA 规则)，
+REM       实测会被 Defender 直接报毒删除，故不再启用 UPX，仅产出 strip 版。
 if not exist "%APP_DIR%dist_static" mkdir "%APP_DIR%dist_static"
 copy /y "%APP_DIR%build_static\SuperCOM.exe" "%APP_DIR%dist_static\SuperCOM.exe" >nul
 
@@ -228,39 +228,11 @@ echo [7/7] Shrinking exe (strip)...
 "%TOOLCHAIN_BIN%\strip.exe" -s "%APP_DIR%dist_static\SuperCOM.exe"
 if errorlevel 1 echo   [WARN] strip failed, skipping (exe stays unstripped)
 
-REM ---------- [7.5/7] 可选: 生成 UPX 压缩版 ----------
-REM 说明: UPX 加壳会触发 Microsoft Defender 启发式误报 (Wacatac/PUA 规则)，
-REM       但体积小 (~9.8MB)。因此同时产出两个版本:
-REM   - dist_static\SuperCOM.exe       无 UPX (推荐分发, ~20MB, Defender 干净)
-REM   - dist_static\SuperCOM_upx.exe   UPX 压缩 (体积小, 但 Defender 可能误报)
-REM 默认: 找到 UPX 工具即自动生成 UPX 版；设 ENABLE_UPX=0 可只出无 UPX 版。
-if "%UPX_TOOL%"=="" set "UPX_TOOL=D:\dev\toolchains\upx\upx-4.2.4-win64\upx.exe"
-if not exist "%UPX_TOOL%" set "UPX_TOOL=D:\dev\toolchains\upx\upx.exe"
-if /I "%ENABLE_UPX%"=="0" set "UPX_TOOL="
-if not exist "%UPX_TOOL%" (
-    echo   [SKIP] UPX not found, only non-UPX version produced
-    echo   Download https://github.com/upx/upx/releases and set UPX_TOOL env var,
-    echo   or place upx.exe at D:\dev\toolchains\upx\upx.exe to produce the UPX variant
-) else (
-    echo.
-    echo [7.5/7] Producing UPX-packed variant...
-    copy /y "%APP_DIR%dist_static\SuperCOM.exe" "%APP_DIR%dist_static\SuperCOM_upx.exe" >nul
-    "%UPX_TOOL%" --best -q "%APP_DIR%dist_static\SuperCOM_upx.exe"
-    if errorlevel 1 (
-        echo   [WARN] UPX failed, removing UPX variant
-        del "%APP_DIR%dist_static\SuperCOM_upx.exe" 2>nul
-    )
-)
-
 echo.
 echo ============================================================
 echo  BUILD OK!
-echo  Non-UPX exe : %APP_DIR%dist_static\SuperCOM.exe
-for %%A in ("%APP_DIR%dist_static\SuperCOM.exe") do echo    Size: %%~zA bytes
-if exist "%APP_DIR%dist_static\SuperCOM_upx.exe" (
-echo  UPX-packed   : %APP_DIR%dist_static\SuperCOM_upx.exe
-for %%A in ("%APP_DIR%dist_static\SuperCOM_upx.exe") do echo    Size: %%~zA bytes
-)
+echo  Single-file exe: %APP_DIR%dist_static\SuperCOM.exe
+for %%A in ("%APP_DIR%dist_static\SuperCOM.exe") do echo  Size: %%~zA bytes
 echo  (zero-dependency, runs on any 64-bit Win10/11)
 echo ============================================================
 endlocal
