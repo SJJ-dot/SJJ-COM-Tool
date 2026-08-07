@@ -1,0 +1,89 @@
+name: build-release
+
+# 触发方式：
+#   - 推送 v* 标签（如 v2.1.0）→ 自动构建并创建 Release 上传 exe
+#   - 手动触发（Actions 页面 Run workflow）→ 构建但不发布，仅产出构建报告
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build static single-file exe
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # 与 build_static.bat 的环境变量一一对应（覆盖默认的 D:\dev 路径）
+      W64DEVKIT: ${{ github.workspace }}\w64devkit
+      QT_SRC: ${{ github.workspace }}\qt-src
+      QT_STATIC_PREFIX: ${{ github.workspace }}\qt-static
+      UPX_TOOL: ${{ github.workspace }}\upx\upx.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download w64devkit (MinGW gcc 13)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/skeeto/w64devkit/releases/download/v1.23.0/w64devkit-1.23.0.zip" -OutFile w64devkit.zip
+          Expand-Archive w64devkit.zip -DestinationPath "$env:GITHUB_WORKSPACE" -Force
+          Get-ChildItem "$env:GITHUB_WORKSPACE\w64devkit\bin\gcc.exe" | Select-Object FullName
+          & "$env:GITHUB_WORKSPACE\w64devkit\bin\gcc.exe" --version | Select-Object -First 1
+
+      - name: Download UPX packer
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip" -OutFile upx.zip
+          Expand-Archive upx.zip -DestinationPath "$env:GITHUB_WORKSPACE\upx" -Force
+          $exe = Get-ChildItem "$env:GITHUB_WORKSPACE\upx" -Recurse -Filter upx.exe | Select-Object -First 1
+          Copy-Item $exe.FullName "$env:GITHUB_WORKSPACE\upx\upx.exe" -Force
+          & "$env:GITHUB_WORKSPACE\upx\upx.exe" --version | Select-Object -First 1
+
+      # Qt 源码缓存在 runner 间共享，二次构建（新 tag）可跳过 git clone
+      - name: Cache Qt sources
+        id: cache-qt-src
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}\qt-src\qtbase
+            ${{ github.workspace }}\qt-src\qt5compat
+            ${{ github.workspace }}\qt-src\qtserialport
+          key: qt-src-6.8.2-${{ runner.os }}
+
+      # 编译好的静态 Qt 库缓存（首次全量编译约 30min，后续 tag 命中缓存秒过）
+      - name: Cache static Qt libs
+        id: cache-qt-static
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\qt-static
+          key: qt-static-6.8.2-${{ runner.os }}-v1
+
+      - name: Build static exe (build_static.bat)
+        shell: cmd
+        run: |
+          call cpp\build_static.bat
+
+      - name: Verify artifact
+        shell: pwsh
+        run: |
+          $exe = Get-Item "cpp\dist_static\SJJ-COM-Tool.exe"
+          Write-Host "exe size: $($exe.Length) bytes"
+          if ($exe.Length -gt 60MB) { throw "exe unexpectedly large: $($exe.Length)" }
+          if ($exe.Length -lt 5MB)  { throw "exe too small (strip/UPX failed?): $($exe.Length)" }
+          Write-Host "artifact OK: $($exe.Length) bytes (~9.7MB after strip+UPX)"
+
+      # 仅在 tag 推送时创建 Release（手动触发则跳过，仅构建验证）
+      - name: Create Release & upload
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cpp/dist_static/SJJ-COM-Tool.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
