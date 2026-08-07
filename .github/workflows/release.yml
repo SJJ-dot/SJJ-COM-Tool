@@ -211,6 +211,18 @@ jobs:
             Write-Host "UPX variant not produced (UPX tool missing) - continuing"
           }
 
+      # 上传产物到 Actions 页面：任何运行(含 master 推送/手动触发)都能下载测试，
+      # 不依赖 Release。UPX 版缺失时仅警告不失败。
+      - name: Upload artifacts (downloadable from Actions page)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperCOM-${{ steps.ver.outputs.version }}
+          path: |
+            cpp/dist_static/SuperCOM.exe
+            cpp/dist_static/SuperCOM_upx.exe
+          if-no-files-found: warn
+          retention-days: 30
+
       # 仅在 tag 推送时创建 Release（手动触发则跳过，仅构建验证）
       # 上传两个版本；UPX 版可能因工具缺失不存在，故 fail_on_unmatched_files=false
       - name: Create Release & upload
