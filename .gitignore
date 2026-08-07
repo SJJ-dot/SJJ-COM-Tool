@@ -4,6 +4,7 @@ cpp/build_mingw/
 cpp/build_static/
 cpp/dist/
 cpp/dist_static/
+cpp/_*.bat
 *.user
 CMakeCache.txt
 CMakeFiles/

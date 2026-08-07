@@ -63,15 +63,24 @@ echo.
 echo [2/6] Preparing Qt %QT_VERSION% sources (first run, needs network ~2 min)...
 if not exist "%QT_SRC%\qtbase" (
     git clone --depth 1 --branch v%QT_VERSION% https://github.com/qt/qtbase.git "%QT_SRC%\qtbase"
-    if errorlevel 1 echo   [ERROR] failed to download qtbase & exit /b 1
+    if errorlevel 1 (
+        echo   [ERROR] failed to download qtbase
+        exit /b 1
+    )
 )
 if not exist "%QT_SRC%\qt5compat" (
     git clone --depth 1 --branch v%QT_VERSION% https://github.com/qt/qt5compat.git "%QT_SRC%\qt5compat"
-    if errorlevel 1 echo   [ERROR] failed to download qt5compat & exit /b 1
+    if errorlevel 1 (
+        echo   [ERROR] failed to download qt5compat
+        exit /b 1
+    )
 )
 if not exist "%QT_SRC%\qtserialport" (
     git clone --depth 1 --branch v%QT_VERSION% https://github.com/qt/qtserialport.git "%QT_SRC%\qtserialport"
-    if errorlevel 1 echo   [ERROR] failed to download qtserialport & exit /b 1
+    if errorlevel 1 (
+        echo   [ERROR] failed to download qtserialport
+        exit /b 1
+    )
 )
 echo   [OK] sources ready
 
