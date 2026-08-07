@@ -31,6 +31,7 @@ class QDialog;
 class QFrame;
 class QVBoxLayout;
 class QHBoxLayout;
+class QFileSystemWatcher;
 
 class UpdateChecker;
 class ExeDownloader;
@@ -157,6 +158,9 @@ private:
     void startMsLoop();
     void msLoopTick();
     void stopMsLoop();
+    // 快捷命令多实例实时同步（仅快捷命令；其他配置不实时同步）
+    void scheduleQuickCmdSave();              // 内容编辑防抖保存（300ms）
+    void onConfigFileChanged(const QString& path);   // 配置文件被其他实例修改
 
     // ---------- 文件发送 ----------
     void pickFile();
@@ -276,6 +280,8 @@ private:
     QTimer* m_flushTimer = nullptr;
     QTimer* m_timerSend = nullptr;
     QTimer* m_msLoopTimer = nullptr;
+    QFileSystemWatcher* m_cfgWatcher = nullptr;   // 监听配置文件（快捷命令同步）
+    QTimer* m_cfgSaveTimer = nullptr;             // 快捷命令保存防抖
     QVector<QVector<QWidget*>> m_msRowWidgets;   // 每行控件
     QString m_theme = QStringLiteral("light");
     QString m_winBg;

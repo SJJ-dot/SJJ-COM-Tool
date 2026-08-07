@@ -45,6 +45,7 @@
 #include <QJsonArray>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QDir>
 #include <QDateTime>
 #include <QProcess>
@@ -84,6 +85,15 @@ SerialTool::SerialTool(QWidget* parent) : QWidget(parent) {
     applyTheme(m_theme);
     refreshPorts();
     autoloadConfig();
+    // 监听配置文件（多实例快捷命令实时同步；autoload 之后添加，避免加载自身写入误触发）
+    m_cfgWatcher = new QFileSystemWatcher(this);
+    connect(m_cfgWatcher, &QFileSystemWatcher::fileChanged,
+            this, &SerialTool::onConfigFileChanged);
+    if (QFileInfo::exists(configPath()))
+        m_cfgWatcher->addPath(configPath());
+    m_cfgSaveTimer = new QTimer(this);
+    m_cfgSaveTimer->setSingleShot(true);
+    connect(m_cfgSaveTimer, &QTimer::timeout, this, [this] { saveParams(true); });
     // 启动延迟 2 秒自动检查更新（后台线程，不阻塞 UI；失败静默）
     QTimer::singleShot(2000, this, &SerialTool::checkUpdateAuto);
 
@@ -1717,13 +1727,52 @@ void SerialTool::refreshMsRows() {
 }
 
 void SerialTool::msSetHex(int i, bool val) {
-    if (i >= 0 && i < m_msEntries.size())
+    if (i >= 0 && i < m_msEntries.size()) {
         m_msEntries[i].hex = val;
+        saveParams(true);   // 快捷命令变化 → 立即保存（触发其他实例同步）
+    }
 }
 
 void SerialTool::msSetContent(int i, const QString& t) {
-    if (i >= 0 && i < m_msEntries.size())
+    if (i >= 0 && i < m_msEntries.size()) {
         m_msEntries[i].content = t;
+        scheduleQuickCmdSave();   // 内容编辑防抖保存（300ms）
+    }
+}
+
+// 快捷命令内容编辑防抖保存
+void SerialTool::scheduleQuickCmdSave() {
+    if (m_cfgSaveTimer)
+        m_cfgSaveTimer->start(300);
+}
+
+// 配置文件被其他实例修改：仅同步快捷命令（ms_entries），其他配置不动
+void SerialTool::onConfigFileChanged(const QString&) {
+    QFile f(configPath());
+    if (!f.open(QIODevice::ReadOnly))
+        return;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+    f.close();
+    if (!doc.isObject())
+        return;
+    const QJsonArray arr = doc.object().value(QStringLiteral("ms_entries")).toArray();
+    // 与当前内容比较：相同（自身保存触发/未变化）则跳过，避免无谓刷新与回环
+    if (QJsonDocument(arr).toJson(QJsonDocument::Compact)
+        == QJsonDocument(msEntriesToData()).toJson(QJsonDocument::Compact))
+        return;
+    // 应用文件中的快捷命令
+    m_msEntries.clear();
+    for (const QJsonValue& v : arr) {
+        const QJsonObject e = v.toObject();
+        MsEntry me;
+        me.hex = e.value(QStringLiteral("hex")).toBool(false);
+        me.content = e.value(QStringLiteral("content")).toString();
+        me.label = e.value(QStringLiteral("label")).toString(QStringLiteral("发送"));
+        if (me.label.isEmpty())
+            me.label = QStringLiteral("发送");
+        m_msEntries.append(me);
+    }
+    refreshMsRows();
 }
 
 void SerialTool::newMsEntry() {
@@ -1733,12 +1782,14 @@ void SerialTool::newMsEntry() {
     e.label = QStringLiteral("发送%1").arg(idx);
     m_msEntries.append(e);
     refreshMsRows();
+    saveParams(true);   // 同步到其他实例
 }
 
 void SerialTool::deleteMsEntry(int i) {
     if (i >= 0 && i < m_msEntries.size()) {
         m_msEntries.removeAt(i);
         refreshMsRows();
+        saveParams(true);   // 同步到其他实例
     }
 }
 
@@ -1753,6 +1804,7 @@ void SerialTool::renameMsEntry(int i) {
     if (ok && !newLabel.trimmed().isEmpty()) {
         m_msEntries[i].label = newLabel.trimmed();
         refreshMsRows();
+        saveParams(true);   // 同步到其他实例
     }
 }
 
