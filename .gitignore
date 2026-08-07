@@ -1,21 +1,25 @@
-# ===== Python =====
-__pycache__/
-*.py[cod]
-/venv/
+# ===== C++ / CMake 构建产物 =====
+cpp/build/
+cpp/build_mingw/
+cpp/build_static/
+cpp/dist/
+cpp/dist_static/
+*.user
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.make
+
+# ===== 运行时生成（exe 目录自动创建） =====
 sscom_config.json
-# 构建时生成的版本号文件（GitHub Actions 注入）
-_version.py
-# 运行时生成的图标缓存（下拉箭头 PNG 等）
-/cache/
+SJJ-COM-Tool.update.exe
+_sjj_update.bat
+*.log
 
-# ===== PyInstaller 打包产物 =====
-build/
-dist/
-*.spec
+# ===== 遗留虚拟环境（待清理，防误提交） =====
+/venv/
 
-# ===== Rust / Tauri 编译产物 =====
-sscom_tauri/src-tauri/target/
-sscom_tauri/src-tauri/gen/
-
-# ===== 开发辅助工具（安装器/压缩器等大文件） =====
-/tools/
+# ===== IDE =====
+.idea/
+.vscode/

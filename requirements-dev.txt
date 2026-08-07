@@ -1,4 +1,0 @@
-# Build/packaging dependencies for SJJ-COM-Tool (includes runtime deps)
--r requirements.txt
-pyinstaller>=6.21
-pillow>=12.3
