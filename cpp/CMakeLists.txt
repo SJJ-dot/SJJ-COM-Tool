@@ -58,11 +58,22 @@ if(_qt_core_type STREQUAL "STATIC_LIBRARY")
     target_link_options(SJJ-COM-Tool PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 
-# 版本号注入（可被 CI 覆盖，例如：-DAPP_VERSION=v1.0.1）
+# 版本号注入（可被 CI 覆盖，例如：-DAPP_VERSION=2.0.3）
 if(NOT DEFINED APP_VERSION)
     set(APP_VERSION "dev")
 endif()
 target_compile_definitions(SJJ-COM-Tool PRIVATE APP_VERSION="${APP_VERSION}")
+
+# Windows 版本资源（右键 exe 属性→详细信息可见文件版本/产品版本）
+# 从 APP_VERSION 拆出 主.次.修订，生成 VERSIONINFO 资源
+if(WIN32)
+    string(REPLACE "." ";" _ver_parts "${APP_VERSION}")
+    list(GET _ver_parts 0 APP_VERSION_MAJOR)
+    list(GET _ver_parts 1 APP_VERSION_MINOR)
+    list(GET _ver_parts 2 APP_VERSION_PATCH)
+    configure_file(src/app.rc.in ${CMAKE_CURRENT_BINARY_DIR}/app.rc @ONLY)
+    target_sources(SJJ-COM-Tool PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/app.rc)
+endif()
 
 if(WIN32)
     # Qt6::Core 会根据 WIN32_EXECUTABLE 属性自动链接 Qt6::EntryPointPrivate
