@@ -102,12 +102,14 @@ set "JOBS=%NUMBER_OF_PROCESSORS%"
 if "%JOBS%"=="" set "JOBS=8"
 
 REM ---------- [3/6] qtbase ----------
+REM 体积优化：-optimize-size(Release 用 -Os) + -ffunction-sections/-fdata-sections
+REM (让静态库每个函数/数据独立成段，应用链接 --gc-sections 时才能剔除未用代码)
 if not exist "%QT_CORE%" (
     echo.
     echo [3/6] Building static qtbase, first run ~12 min, please wait...
     if not exist "%QT_SRC%\qtbase-static-build" mkdir "%QT_SRC%\qtbase-static-build"
     pushd "%QT_SRC%\qtbase-static-build"
-    call "%QT_SRC%\qtbase\configure.bat" -static -release -opensource -confirm-license -prefix "%QT_STATIC_PREFIX%" -nomake examples -nomake tests -no-opengl -no-dbus -no-feature-vulkan
+    call "%QT_SRC%\qtbase\configure.bat" -static -release -opensource -confirm-license -prefix "%QT_STATIC_PREFIX%" -nomake examples -nomake tests -no-opengl -no-dbus -no-feature-vulkan -optimize-size "QMAKE_CFLAGS+=-ffunction-sections -fdata-sections" "QMAKE_CXXFLAGS+=-ffunction-sections -fdata-sections"
     if errorlevel 1 (
         popd
         echo   [ERROR] qtbase configure failed, see log above
@@ -135,7 +137,7 @@ if not exist "%QT_CORE5%" (
     echo [4/6] Building static qt5compat...
     if not exist "%QT_SRC%\qt5compat-static-build" mkdir "%QT_SRC%\qt5compat-static-build"
     pushd "%QT_SRC%\qt5compat-static-build"
-    cmake -S "%QT_SRC%\qt5compat" -B . -G Ninja -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+    cmake -S "%QT_SRC%\qt5compat" -B . -G Ninja -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections"
     if errorlevel 1 (
         popd
         echo   [ERROR] qt5compat configure failed
@@ -163,7 +165,7 @@ if not exist "%QT_SERIAL%" (
     echo [5/6] Building static qtserialport...
     if not exist "%QT_SRC%\qtserialport-static-build" mkdir "%QT_SRC%\qtserialport-static-build"
     pushd "%QT_SRC%\qtserialport-static-build"
-    cmake -S "%QT_SRC%\qtserialport" -B . -G Ninja -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+    cmake -S "%QT_SRC%\qtserialport" -B . -G Ninja -DCMAKE_PREFIX_PATH="%QT_STATIC_PREFIX%" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DCMAKE_CXX_FLAGS="-Os -ffunction-sections -fdata-sections"
     if errorlevel 1 (
         popd
         echo   [ERROR] qtserialport configure failed
