@@ -104,12 +104,14 @@ if "%JOBS%"=="" set "JOBS=8"
 REM ---------- [3/6] qtbase ----------
 REM 体积优化：-optimize-size(Release 用 -Os) + -ffunction-sections/-fdata-sections
 REM (让静态库每个函数/数据独立成段，应用链接 --gc-sections 时才能剔除未用代码)
+REM 注意：Qt 6 configure 是 CMake 包装器，不透传 qmake 变量；用 "--" 分隔符后
+REM       传 CMake 参数（官方支持，见 configure-options 文档）。
 if not exist "%QT_CORE%" (
     echo.
     echo [3/6] Building static qtbase, first run ~12 min, please wait...
     if not exist "%QT_SRC%\qtbase-static-build" mkdir "%QT_SRC%\qtbase-static-build"
     pushd "%QT_SRC%\qtbase-static-build"
-    call "%QT_SRC%\qtbase\configure.bat" -static -release -opensource -confirm-license -prefix "%QT_STATIC_PREFIX%" -nomake examples -nomake tests -no-opengl -no-dbus -no-feature-vulkan -optimize-size "QMAKE_CFLAGS+=-ffunction-sections -fdata-sections" "QMAKE_CXXFLAGS+=-ffunction-sections -fdata-sections"
+    call "%QT_SRC%\qtbase\configure.bat" -static -release -opensource -confirm-license -prefix "%QT_STATIC_PREFIX%" -nomake examples -nomake tests -no-opengl -no-dbus -no-feature-vulkan -optimize-size -- "-DCMAKE_C_FLAGS=-ffunction-sections -fdata-sections" "-DCMAKE_CXX_FLAGS=-ffunction-sections -fdata-sections"
     if errorlevel 1 (
         popd
         echo   [ERROR] qtbase configure failed, see log above
