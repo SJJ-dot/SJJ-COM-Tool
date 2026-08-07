@@ -62,12 +62,24 @@ jobs:
           path: ${{ github.workspace }}\qt-static
           key: qt-static-6.8.2-${{ runner.os }}-v1
 
-      # QT_ONLY=1：只编译静态 Qt 库（qtbase/qt5compat/qtserialport），不编译应用
+      # 关键修复：只有缓存未命中才编译 Qt，命中则跳过 30 分钟构建
       - name: Build static Qt libs only (QT_ONLY=1)
+        if: steps.cache-qt-static.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           set QT_ONLY=1
           call cpp\build_static.bat
+
+      # 调试信息：便于确认是否命中缓存
+      - name: Cache debug info
+        shell: pwsh
+        run: |
+          Write-Host "cache-hit(static): ${{ steps.cache-qt-static.outputs.cache-hit }}"
+          if (Test-Path "$env:GITHUB_WORKSPACE\qt-static") {
+            Write-Host "qt-static exists"
+          } else {
+            Write-Host "qt-static missing"
+          }
 
   # ============ job 2: 恢复缓存 → 编译应用 → strip/UPX → 发布 ============
   build-app:
