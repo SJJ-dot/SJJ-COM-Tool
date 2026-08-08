@@ -98,6 +98,9 @@ if(WIN32)
         list(GET _ver_nums 2 APP_VERSION_PATCH)
     endif()
     configure_file(src/app.rc.in ${CMAKE_CURRENT_BINARY_DIR}/app.rc @ONLY)
+    # 将应用图标复制到构建目录，与生成的 app.rc 同级，供资源编译器嵌入 ICON 资源
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../imgs/ic_xue_xi.ico
+                   ${CMAKE_CURRENT_BINARY_DIR}/app_icon.ico COPYONLY)
     target_sources(SuperCOM PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/app.rc)
 endif()
 

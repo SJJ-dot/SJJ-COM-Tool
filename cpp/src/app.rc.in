@@ -1,6 +1,10 @@
 // SuperCOM Windows 版本资源（由 CMake configure_file 注入版本号）
 #include <windows.h>
 
+// 桌面/资源管理器 exe 文件图标（编译期嵌入，非运行时 setWindowIcon）
+// app_icon.ico 由 CMakeLists 在 configure 阶段复制到构建目录，与生成的 app.rc 同级
+IDI_ICON1 ICON "app_icon.ico"
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION     @APP_VERSION_MAJOR@,@APP_VERSION_MINOR@,@APP_VERSION_PATCH@,0
  PRODUCTVERSION  @APP_VERSION_MAJOR@,@APP_VERSION_MINOR@,@APP_VERSION_PATCH@,0
