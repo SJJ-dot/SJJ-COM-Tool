@@ -68,14 +68,15 @@ jobs:
           key: qt-src-6.8.2-${{ runner.os }}
 
       # 编译好的静态 Qt 库缓存：本 job 成功即保存，后续 job 命中则跳过全量编译
-      # v2: Qt 库改用 -Os + -ffunction-sections 重编（配合应用 --gc-sections 瘦身），
-      #     旧 v1 缓存(Qt 库无 function-sections)作废，强制重编一次。
+      # v2: Qt 库改用 -Os + -ffunction-sections 重编（配合应用 --gc-sections 瘦身）
+      # v3: 追加 feature 裁剪 -no-feature-udp/sctp/dtls/jpeg，进一步瘦身
+      #     每次 Qt 编译参数变化都要升版本号，否则旧缓存命中导致新参数不生效
       - name: Cache static Qt libs
         id: cache-qt-static
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\qt-static
-          key: qt-static-6.8.2-${{ runner.os }}-v2
+          key: qt-static-6.8.2-${{ runner.os }}-v3
 
       # 关键修复：只有缓存未命中才编译 Qt，命中则跳过 30 分钟构建
       - name: Build static Qt libs only (QT_ONLY=1)
@@ -144,7 +145,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\qt-static
-          key: qt-static-6.8.2-${{ runner.os }}-v2
+          key: qt-static-6.8.2-${{ runner.os }}-v3
 
       # Qt 缓存命中时 build_static.bat 自动跳过 [3/6]-[5/6]，直接编译应用
       # 版本号：tag 触发时取 tag 名（去 v 前缀，如 v2.0.3 -> 2.0.3），
